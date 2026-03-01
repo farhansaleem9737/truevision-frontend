@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,11 +10,12 @@ import {
   TextInput,
   ActivityIndicator,
   RefreshControl,
+  Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { Video } from 'expo-av';
 import pexelsService from '../services/pexelsService';
+import ScreenContainer from '../components/ScreenContainer';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 48) / 2;
@@ -24,19 +25,21 @@ export default function DiscoverScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState(route?.params?.category || 'nature');
-  const [page, setPage] = useState(1);
   const [selectedFilter, setSelectedFilter] = useState('all');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+
+  const searchScale = useRef(new Animated.Value(1)).current;
 
   const filters = [
-    { id: 'all', label: 'All', query: 'nature' },
-    { id: 'nature', label: 'Nature', query: 'nature' },
-    { id: 'tech', label: 'Technology', query: 'technology' },
-    { id: 'people', label: 'People', query: 'people' },
-    { id: 'animals', label: 'Animals', query: 'animals' },
-    { id: 'food', label: 'Food', query: 'food' },
-    { id: 'travel', label: 'Travel', query: 'travel' },
-    { id: 'sports', label: 'Sports', query: 'sports' },
-    { id: 'music', label: 'Music', query: 'music' },
+    { id: 'all', label: '✨ All', query: 'nature', gradient: ['#667eea', '#764ba2'] },
+    { id: 'nature', label: '🌿 Nature', query: 'nature', gradient: ['#10b981', '#059669'] },
+    { id: 'tech', label: '💻 Tech', query: 'technology', gradient: ['#3b82f6', '#2563eb'] },
+    { id: 'people', label: '👥 People', query: 'people', gradient: ['#f59e0b', '#d97706'] },
+    { id: 'animals', label: '🐾 Animals', query: 'animals', gradient: ['#8b5cf6', '#7c3aed'] },
+    { id: 'food', label: '🍔 Food', query: 'food', gradient: ['#ef4444', '#dc2626'] },
+    { id: 'travel', label: '✈️ Travel', query: 'travel', gradient: ['#06b6d4', '#0891b2'] },
+    { id: 'sports', label: '⚽ Sports', query: 'sports', gradient: ['#f97316', '#ea580c'] },
+    { id: 'music', label: '🎵 Music', query: 'music', gradient: ['#ec4899', '#db2777'] },
   ];
 
   useEffect(() => {
@@ -50,7 +53,6 @@ export default function DiscoverScreen({ navigation, route }) {
     if (result.success) {
       setVideos(result.data.videos || []);
     } else {
-      // Fallback mock data if API fails
       setVideos(getMockVideos());
     }
     setLoading(false);
@@ -73,25 +75,186 @@ export default function DiscoverScreen({ navigation, route }) {
     setSearchQuery(filter.query);
   };
 
+  const handleSearchFocus = () => {
+    setIsSearchFocused(true);
+    Animated.spring(searchScale, {
+      toValue: 1.02,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleSearchBlur = () => {
+    setIsSearchFocused(false);
+    Animated.spring(searchScale, {
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  };
+
   const getMockVideos = () => {
-    // Fallback mock data
-    return Array.from({ length: 10 }, (_, i) => ({
+    return Array.from({ length: 20 }, (_, i) => ({
       id: i + 1,
       user: {
         name: `Creator ${i + 1}`,
       },
       video_files: [{
-        link: 'https://player.vimeo.com/external/xxx.mp4',
+        link: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
         quality: 'hd',
       }],
       video_pictures: [{
-        picture: `https://images.pexels.com/videos/${1000 + i}/free-video-${1000 + i}.jpg`,
+        picture: `https://picsum.photos/seed/${1000 + i}/600/800`,
       }],
       duration: 15 + (i * 5),
       width: 1920,
       height: 1080,
     }));
   };
+
+  const renderHeader = () => (
+    <View style={{
+      backgroundColor: 'white',
+      paddingHorizontal: 24,
+      paddingTop: 16,
+      paddingBottom: 20,
+      borderBottomLeftRadius: 24,
+      borderBottomRightRadius: 24,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.05,
+      shadowRadius: 8,
+      elevation: 3,
+      marginBottom: 24,
+    }}>
+      {/* Title */}
+      <View style={{ marginBottom: 16 }}>
+        <Text style={{
+          fontSize: 32,
+          fontWeight: '900',
+          color: '#111827',
+          letterSpacing: -1,
+          marginBottom: 4,
+        }}>
+          Discover
+        </Text>
+        <Text style={{ fontSize: 14, color: '#6b7280' }}>
+          Explore thousands of authentic videos
+        </Text>
+      </View>
+
+      {/* Search Bar */}
+      <Animated.View
+        style={{
+          transform: [{ scale: searchScale }],
+        }}
+      >
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: '#f3f4f6',
+          borderRadius: 16,
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+          marginBottom: 16,
+          borderWidth: 2,
+          borderColor: isSearchFocused ? '#3b82f6' : 'transparent',
+        }}>
+          <Ionicons
+            name="search"
+            size={20}
+            color={isSearchFocused ? '#3b82f6' : '#9ca3af'}
+          />
+          <TextInput
+            placeholder="Search videos, topics..."
+            placeholderTextColor="#9ca3af"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onSubmitEditing={handleSearch}
+            onFocus={handleSearchFocus}
+            onBlur={handleSearchBlur}
+            style={{
+              flex: 1,
+              fontSize: 15,
+              color: '#111827',
+              marginLeft: 12,
+              fontWeight: '500',
+            }}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity
+              onPress={() => setSearchQuery('')}
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 12,
+                backgroundColor: '#e5e7eb',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name="close" size={16} color="#6b7280" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </Animated.View>
+
+      {/* Filters */}
+      <FlatList
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        data={filters}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={{ paddingRight: 24 }}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            onPress={() => handleFilterPress(item)}
+            activeOpacity={0.8}
+            style={{ marginRight: 10 }}
+          >
+            {selectedFilter === item.id ? (
+              <LinearGradient
+                colors={item.gradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{
+                  paddingHorizontal: 18,
+                  paddingVertical: 10,
+                  borderRadius: 14,
+                  shadowColor: item.gradient[0],
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                  elevation: 5,
+                }}
+              >
+                <Text style={{
+                  fontSize: 14,
+                  fontWeight: 'bold',
+                  color: 'white',
+                }}>
+                  {item.label}
+                </Text>
+              </LinearGradient>
+            ) : (
+              <View style={{
+                paddingHorizontal: 18,
+                paddingVertical: 10,
+                borderRadius: 14,
+                backgroundColor: '#f3f4f6',
+              }}>
+                <Text style={{
+                  fontSize: 14,
+                  fontWeight: '600',
+                  color: '#6b7280',
+                }}>
+                  {item.label}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        )}
+      />
+    </View>
+  );
 
   const renderVideoCard = ({ item, index }) => {
     const thumbnail = item.video_pictures?.[0]?.picture || item.image;
@@ -100,52 +263,135 @@ export default function DiscoverScreen({ navigation, route }) {
 
     return (
       <TouchableOpacity
-        activeOpacity={0.8}
+        activeOpacity={0.9}
         onPress={() => navigation.navigate('VideoPlayer', { video: item })}
         style={{
           width: CARD_WIDTH,
           marginLeft: index % 2 === 0 ? 0 : 12,
-          marginBottom: 12,
+          marginBottom: 16,
         }}
       >
-        <View className="bg-white rounded-2xl overflow-hidden shadow-sm">
+        <View style={{
+          borderRadius: 20,
+          overflow: 'hidden',
+          backgroundColor: 'white',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.1,
+          shadowRadius: 12,
+          elevation: 5,
+        }}>
           {/* Thumbnail */}
-          <View style={{ height: CARD_WIDTH * 1.4, position: 'relative' }}>
+          <View style={{ height: CARD_WIDTH * 1.5, position: 'relative' }}>
             <Image
               source={{ uri: thumbnail }}
               style={{ width: '100%', height: '100%' }}
               resizeMode="cover"
             />
             
-            {/* Duration Badge */}
-            <View
-              className="absolute bottom-2 right-2 bg-black/70 px-2 py-1 rounded-lg"
+            {/* Gradient Overlay */}
+            <LinearGradient
+              colors={['transparent', 'rgba(0,0,0,0.8)']}
+              style={{
+                position: 'absolute',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: 100,
+                padding: 12,
+                justifyContent: 'flex-end',
+              }}
             >
-              <Text className="text-white text-xs font-semibold">
-                {duration}s
-              </Text>
-            </View>
-
-            {/* Play Icon */}
-            <View
-              className="absolute inset-0 items-center justify-center"
-            >
-              <View className="w-14 h-14 bg-white/30 rounded-full items-center justify-center">
-                <Ionicons name="play" size={24} color="white" />
+              {/* Duration Badge */}
+              <View
+                style={{
+                  position: 'absolute',
+                  top: 12,
+                  right: 12,
+                  backgroundColor: 'rgba(0,0,0,0.8)',
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.2)',
+                }}
+              >
+                <Text style={{ color: 'white', fontSize: 11, fontWeight: 'bold' }}>
+                  {duration}s
+                </Text>
               </View>
+            </LinearGradient>
+
+            {/* Play Icon Overlay */}
+            <View
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                marginTop: -28,
+                marginLeft: -28,
+              }}
+            >
+              <LinearGradient
+                colors={['rgba(59, 130, 246, 0.9)', 'rgba(139, 92, 246, 0.9)']}
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 28,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  shadowColor: '#3b82f6',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.4,
+                  shadowRadius: 8,
+                  elevation: 8,
+                }}
+              >
+                <Ionicons name="play" size={24} color="white" style={{ marginLeft: 3 }} />
+              </LinearGradient>
             </View>
           </View>
 
           {/* Info */}
-          <View className="p-3">
-            <Text className="text-gray-900 font-semibold text-sm mb-1" numberOfLines={2}>
+          <View style={{ padding: 12 }}>
+            <Text
+              style={{
+                fontSize: 14,
+                fontWeight: 'bold',
+                color: '#111827',
+                marginBottom: 8,
+                lineHeight: 18,
+              }}
+              numberOfLines={2}
+            >
               {item.title || `Video by ${creator}`}
             </Text>
-            <View className="flex-row items-center">
-              <Ionicons name="person-circle" size={14} color="#94a3b8" />
-              <Text className="text-gray-500 text-xs ml-1" numberOfLines={1}>
-                {creator}
-              </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <View style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: 10,
+                  backgroundColor: '#e5e7eb',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginRight: 6,
+                }}>
+                  <Text style={{ fontSize: 10, fontWeight: 'bold' }}>
+                    {creator.charAt(0)}
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    fontSize: 12,
+                    color: '#6b7280',
+                    fontWeight: '500',
+                  }}
+                  numberOfLines={1}
+                >
+                  {creator}
+                </Text>
+              </View>
             </View>
           </View>
         </View>
@@ -153,92 +399,94 @@ export default function DiscoverScreen({ navigation, route }) {
     );
   };
 
-  return (
-    <View className="flex-1 bg-gray-50">
-      <StatusBar barStyle="dark-content" backgroundColor="#f9fafb" />
-
-      {/* Header */}
-      <View className="bg-white px-6 pt-6 pb-4">
-        <Text className="text-3xl font-black text-gray-900 mb-4">
-          Discover
-        </Text>
-
-        {/* Search Bar */}
-        <View className="flex-row items-center bg-gray-100 rounded-2xl px-4 py-3 mb-4">
-          <Ionicons name="search" size={20} color="#94a3b8" />
-          <TextInput
-            placeholder="Search videos..."
-            placeholderTextColor="#94a3b8"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={handleSearch}
-            className="flex-1 text-gray-900 text-base ml-2"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={20} color="#94a3b8" />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Filters */}
-        <FlatList
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          data={filters}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingRight: 24 }}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              onPress={() => handleFilterPress(item)}
-              activeOpacity={0.7}
-              className={`px-5 py-2 rounded-full mr-2 ${
-                selectedFilter === item.id
-                  ? 'bg-blue-600'
-                  : 'bg-gray-200'
-              }`}
-            >
-              <Text
-                className={`font-semibold text-sm ${
-                  selectedFilter === item.id
-                    ? 'text-white'
-                    : 'text-gray-700'
-                }`}
-              >
-                {item.label}
-              </Text>
-            </TouchableOpacity>
-          )}
-        />
+  const renderEmptyComponent = () => (
+    <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 80 }}>
+      <View style={{
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        backgroundColor: 'white',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 24,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        elevation: 5,
+      }}>
+        <Ionicons name="videocam-off" size={48} color="#cbd5e1" />
       </View>
+      <Text style={{
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#374151',
+        marginBottom: 8,
+      }}>
+        No Videos Found
+      </Text>
+      <Text style={{
+        fontSize: 14,
+        color: '#9ca3af',
+        textAlign: 'center',
+        paddingHorizontal: 48,
+        lineHeight: 20,
+      }}>
+        Try adjusting your search or filters to find what you're looking for
+      </Text>
+    </View>
+  );
 
-      {/* Videos Grid */}
+  return (
+    <ScreenContainer backgroundColor="#f8fafc" edges={['top', 'bottom']}>
+      <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
+
       {loading ? (
-        <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#3b82f6" />
-          <Text className="text-gray-500 mt-4">Loading videos...</Text>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{
+            width: 80,
+            height: 80,
+            borderRadius: 40,
+            backgroundColor: 'white',
+            alignItems: 'center',
+            justifyContent: 'center',
+            shadowColor: '#3b82f6',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.2,
+            shadowRadius: 12,
+            elevation: 8,
+            marginBottom: 16,
+          }}>
+            <ActivityIndicator size="large" color="#3b82f6" />
+          </View>
+          <Text style={{ fontSize: 16, fontWeight: '600', color: '#6b7280' }}>
+            Loading videos...
+          </Text>
+          <Text style={{ fontSize: 13, color: '#9ca3af', marginTop: 4 }}>
+            Please wait
+          </Text>
         </View>
       ) : (
         <FlatList
+          ListHeaderComponent={renderHeader}
           data={videos}
           keyExtractor={(item, index) => `${item.id}-${index}`}
           numColumns={2}
           columnWrapperStyle={{ paddingHorizontal: 24 }}
-          contentContainerStyle={{ paddingTop: 16, paddingBottom: 100 }}
+          contentContainerStyle={{ paddingBottom: 24 }}
           renderItem={renderVideoCard}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#3b82f6"
+              colors={['#3b82f6']}
+            />
           }
-          ListEmptyComponent={
-            <View className="items-center justify-center py-20">
-              <Ionicons name="videocam-off" size={64} color="#cbd5e1" />
-              <Text className="text-gray-500 mt-4 text-center px-8">
-                No videos found. Try a different search term.
-              </Text>
-            </View>
-          }
+          ListEmptyComponent={renderEmptyComponent}
+          showsVerticalScrollIndicator={false}
         />
       )}
-    </View>
+    </ScreenContainer>
   );
 }

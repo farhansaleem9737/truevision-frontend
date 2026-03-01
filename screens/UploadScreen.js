@@ -12,6 +12,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import ScreenContainer from '../components/ScreenContainer';
 
 export default function UploadScreen({ navigation }) {
   const [videoUri, setVideoUri] = useState(null);
@@ -128,7 +129,7 @@ export default function UploadScreen({ navigation }) {
   };
 
   return (
-    <View className="flex-1 bg-gray-50">
+    <ScreenContainer backgroundColor="#f9fafb" edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor="#f9fafb" />
 
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -360,6 +361,6 @@ export default function UploadScreen({ navigation }) {
           )}
         </View>
       </ScrollView>
-    </View>
+    </ScreenContainer>
   );
 }

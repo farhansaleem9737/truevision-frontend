@@ -1,9 +1,10 @@
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
-// Import screens
+// Import Auth screens
 import SplashScreen from './screens/SplashScreen';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
@@ -11,8 +12,9 @@ import VerifyEmailScreen from './screens/VerifyEmailScreen';
 import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 
-// Import Bottom Tab Navigator
+// Import Main App screens
 import BottomTabNavigator from './navigation/BottomTabNavigator';
+import VideoPlayerScreen from './screens/VideoPlayerScreen';
 
 import './global.css';
 
@@ -38,7 +40,7 @@ function AuthStack() {
   );
 }
 
-// App Stack (Main app with bottom tabs)
+// App Stack (Main app with bottom tabs + modal screens)
 function AppStack() {
   return (
     <Stack.Navigator
@@ -46,7 +48,23 @@ function AppStack() {
         headerShown: false,
       }}
     >
-      <Stack.Screen name="MainApp" component={BottomTabNavigator} />
+      {/* Main Bottom Tab Navigator */}
+      <Stack.Screen 
+        name="MainApp" 
+        component={BottomTabNavigator} 
+      />
+      
+      {/* Video Player as Modal */}
+      <Stack.Screen
+        name="VideoPlayer"
+        component={VideoPlayerScreen}
+        options={{
+          presentation: 'modal',
+          animation: 'slide_from_bottom',
+          gestureEnabled: true,
+          gestureDirection: 'vertical',
+        }}
+      />
     </Stack.Navigator>
   );
 }
@@ -65,10 +83,12 @@ function RootNavigator() {
 // Main App Component
 export default function App() {
   return (
-    <AuthProvider>
-      <NavigationContainer>
-        <RootNavigator />
-      </NavigationContainer>
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <NavigationContainer>
+          <RootNavigator />
+        </NavigationContainer>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

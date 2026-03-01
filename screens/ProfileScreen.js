@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,19 +6,25 @@ import {
   TouchableOpacity,
   StatusBar,
   Alert,
-  Image,
+  FlatList,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import ScreenContainer from '../components/ScreenContainer';
+
+const { width } = Dimensions.get('window');
+const CARD_WIDTH = (width - 48) / 3;
 
 export default function ProfileScreen({ navigation }) {
   const { user, logout } = useAuth();
+  const [activeTab, setActiveTab] = useState('videos');
 
   const stats = [
-    { label: 'Videos', value: '0', icon: 'videocam', color: '#3b82f6' },
-    { label: 'Followers', value: '0', icon: 'people', color: '#8b5cf6' },
-    { label: 'Following', value: '0', icon: 'person-add', color: '#ec4899' },
+    { label: 'Videos', value: '24', icon: 'videocam', color: '#3b82f6' },
+    { label: 'Followers', value: '1.2K', icon: 'people', color: '#8b5cf6' },
+    { label: 'Following', value: '342', icon: 'person-add', color: '#ec4899' },
   ];
 
   const menuItems = [
@@ -36,7 +42,7 @@ export default function ProfileScreen({ navigation }) {
       subtitle: 'View your uploaded content',
       icon: 'film',
       color: '#8b5cf6',
-      onPress: () => Alert.alert('Coming Soon', 'My videos feature'),
+      onPress: () => setActiveTab('videos'),
     },
     {
       id: 3,
@@ -44,7 +50,7 @@ export default function ProfileScreen({ navigation }) {
       subtitle: 'Your bookmarked content',
       icon: 'bookmark',
       color: '#f59e0b',
-      onPress: () => Alert.alert('Coming Soon', 'Saved videos feature'),
+      onPress: () => setActiveTab('saved'),
     },
     {
       id: 4,
@@ -63,6 +69,37 @@ export default function ProfileScreen({ navigation }) {
       onPress: () => Alert.alert('Coming Soon', 'Help & support feature'),
     },
   ];
+
+  // Mock video data for demonstration
+  const myVideos = Array.from({ length: 12 }, (_, i) => ({
+    id: i + 1,
+    title: `My Video ${i + 1}`,
+    thumbnail: `https://picsum.photos/seed/${i}/400/600`,
+    views: Math.floor(Math.random() * 50000) + 1000,
+    duration: Math.floor(Math.random() * 180) + 30,
+    video_files: [{
+      link: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+    }],
+    user: {
+      name: user?.fullName || user?.username || 'You'
+    },
+    description: 'One of my amazing videos!',
+  }));
+
+  const savedVideos = Array.from({ length: 8 }, (_, i) => ({
+    id: i + 100,
+    title: `Saved Video ${i + 1}`,
+    thumbnail: `https://picsum.photos/seed/${i + 100}/400/600`,
+    views: Math.floor(Math.random() * 100000) + 5000,
+    duration: Math.floor(Math.random() * 240) + 45,
+    video_files: [{
+      link: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4'
+    }],
+    user: {
+      name: 'Content Creator'
+    },
+    description: 'A saved video from my collection',
+  }));
 
   const handleLogout = () => {
     Alert.alert(
@@ -85,8 +122,59 @@ export default function ProfileScreen({ navigation }) {
     );
   };
 
+  const formatNumber = (num) => {
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return num.toString();
+  };
+
+  const renderVideoCard = ({ item }) => (
+    <TouchableOpacity
+      activeOpacity={0.8}
+      onPress={() => navigation.navigate('VideoPlayer', { video: item })}
+      style={{
+        width: CARD_WIDTH,
+        height: CARD_WIDTH * 1.6,
+        marginBottom: 6,
+      }}
+    >
+      <View className="bg-gray-200 rounded-xl overflow-hidden" style={{ flex: 1 }}>
+        {/* Mock thumbnail */}
+        <View className="flex-1 bg-gradient-to-b from-blue-400 to-purple-400 items-center justify-center">
+          <Ionicons name="play-circle" size={40} color="white" />
+        </View>
+        
+        {/* Overlay info */}
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.8)']}
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            padding: 6,
+          }}
+        >
+          <View className="flex-row items-center justify-between">
+            <View className="flex-row items-center">
+              <Ionicons name="eye" size={12} color="white" />
+              <Text className="text-white text-xs ml-1 font-semibold">
+                {formatNumber(item.views)}
+              </Text>
+            </View>
+            <View className="bg-black/70 px-2 py-0.5 rounded">
+              <Text className="text-white text-xs font-semibold">
+                {Math.floor(item.duration / 60)}:{(item.duration % 60).toString().padStart(2, '0')}
+              </Text>
+            </View>
+          </View>
+        </LinearGradient>
+      </View>
+    </TouchableOpacity>
+  );
+
   return (
-    <View className="flex-1 bg-gray-50">
+    <ScreenContainer backgroundColor="#f9fafb" edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor="#3b82f6" />
 
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -196,6 +284,79 @@ export default function ProfileScreen({ navigation }) {
             </TouchableOpacity>
           </View>
 
+          {/* Tabs for Videos */}
+          <View className="bg-white rounded-3xl mt-6 p-6 shadow-lg">
+            <View className="flex-row border-b border-gray-200 mb-4">
+              <TouchableOpacity
+                onPress={() => setActiveTab('videos')}
+                className={`flex-1 py-3 ${
+                  activeTab === 'videos' ? 'border-b-2 border-blue-600' : ''
+                }`}
+              >
+                <View className="flex-row items-center justify-center">
+                  <Ionicons
+                    name="grid"
+                    size={20}
+                    color={activeTab === 'videos' ? '#3b82f6' : '#94a3b8'}
+                  />
+                  <Text
+                    className={`ml-2 font-semibold ${
+                      activeTab === 'videos' ? 'text-blue-600' : 'text-gray-500'
+                    }`}
+                  >
+                    My Videos
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setActiveTab('saved')}
+                className={`flex-1 py-3 ${
+                  activeTab === 'saved' ? 'border-b-2 border-blue-600' : ''
+                }`}
+              >
+                <View className="flex-row items-center justify-center">
+                  <Ionicons
+                    name="bookmark"
+                    size={20}
+                    color={activeTab === 'saved' ? '#3b82f6' : '#94a3b8'}
+                  />
+                  <Text
+                    className={`ml-2 font-semibold ${
+                      activeTab === 'saved' ? 'text-blue-600' : 'text-gray-500'
+                    }`}
+                  >
+                    Saved
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* Videos Grid */}
+            <FlatList
+              data={activeTab === 'videos' ? myVideos : savedVideos}
+              keyExtractor={(item) => item.id.toString()}
+              numColumns={3}
+              columnWrapperStyle={{ justifyContent: 'space-between' }}
+              renderItem={renderVideoCard}
+              scrollEnabled={false}
+              ListEmptyComponent={
+                <View className="items-center py-12">
+                  <Ionicons
+                    name={activeTab === 'videos' ? 'videocam-outline' : 'bookmark-outline'}
+                    size={64}
+                    color="#cbd5e1"
+                  />
+                  <Text className="text-gray-500 mt-4 text-center">
+                    {activeTab === 'videos'
+                      ? 'No videos yet. Start uploading!'
+                      : 'No saved videos yet'}
+                  </Text>
+                </View>
+              }
+            />
+          </View>
+
           {/* Menu Items */}
           <View className="mt-6 mb-8">
             {menuItems.map((item) => (
@@ -255,6 +416,6 @@ export default function ProfileScreen({ navigation }) {
           </View>
         </View>
       </ScrollView>
-    </View>
+    </ScreenContainer>
   );
 }

@@ -13,6 +13,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import pexelsService from '../services/pexelsService';
+import ScreenContainer from '../components/ScreenContainer';
 
 const { width } = Dimensions.get('window');
 
@@ -199,7 +200,7 @@ export default function TrendingScreen({ navigation }) {
   };
 
   return (
-    <View className="flex-1 bg-gray-50">
+    <ScreenContainer backgroundColor="#f9fafb" edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor="#f9fafb" />
 
       {/* Header */}
@@ -303,6 +304,6 @@ export default function TrendingScreen({ navigation }) {
           }
         />
       )}
-    </View>
+    </ScreenContainer>
   );
 }
