@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
+import { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../services/AuthServices';
 
@@ -25,28 +25,18 @@ export const AuthProvider = ({ children }) => {
 
   const loadUserData = async () => {
     try {
-      const storedToken = await AsyncStorage.getItem('authToken');
-      const storedUser = await AsyncStorage.getItem('userData');
+      // Read both keys in parallel instead of sequentially
+      const [storedToken, storedUser] = await Promise.all([
+        AsyncStorage.getItem('authToken'),
+        AsyncStorage.getItem('userData'),
+      ]);
 
       if (storedToken && storedUser) {
-        const parsedUser = JSON.parse(storedUser);
-        
-        // Verify token is still valid by fetching user profile
-        try {
-          const profileResponse = await authService.getProfile(storedToken);
-          
-          if (profileResponse.success) {
-            setToken(storedToken);
-            setUser(profileResponse.data.user);
-            setIsAuthenticated(true);
-          } else {
-            // Token is invalid, clear storage
-            await clearAuthData();
-          }
-        } catch (error) {
-          console.error('Token validation error:', error);
-          await clearAuthData();
-        }
+        // Trust the stored token immediately — no network call on startup.
+        // This eliminates the server round-trip that was blocking the app.
+        setToken(storedToken);
+        setUser(JSON.parse(storedUser));
+        setIsAuthenticated(true);
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -77,16 +67,18 @@ export const AuthProvider = ({ children }) => {
   const login = async (emailOrUsername, password) => {
     try {
       const response = await authService.login(emailOrUsername, password);
-      
+
       if (response.success) {
-        // Save token and user data
-        await AsyncStorage.setItem('authToken', response.data.token);
-        await AsyncStorage.setItem('userData', JSON.stringify(response.data.user));
-        
-        // Update state immediately
+        // Update state immediately — don't block on storage writes
         setToken(response.data.token);
         setUser(response.data.user);
         setIsAuthenticated(true);
+
+        // Write both keys in parallel in the background
+        Promise.all([
+          AsyncStorage.setItem('authToken', response.data.token),
+          AsyncStorage.setItem('userData', JSON.stringify(response.data.user)),
+        ]).catch(e => console.error('AsyncStorage write error:', e));
         
         return { 
           success: true, 
@@ -126,18 +118,19 @@ export const AuthProvider = ({ children }) => {
   const verifyEmail = async (email, otp) => {
     try {
       const response = await authService.verifyEmail(email, otp);
-      
+
       if (response.success) {
-        // Save token and user data
-        await AsyncStorage.setItem('authToken', response.data.token);
-        await AsyncStorage.setItem('userData', JSON.stringify(response.data.user));
-        
-        // Update state immediately
+        // Update state immediately — don't block on storage writes
         setToken(response.data.token);
         setUser(response.data.user);
         setIsAuthenticated(true);
+
+        Promise.all([
+          AsyncStorage.setItem('authToken', response.data.token),
+          AsyncStorage.setItem('userData', JSON.stringify(response.data.user)),
+        ]).catch(e => console.error('AsyncStorage write error:', e));
       }
-      
+
       return response;
     } catch (error) {
       console.error('Verification error:', error);

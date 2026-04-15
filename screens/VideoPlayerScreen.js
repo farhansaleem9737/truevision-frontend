@@ -29,7 +29,7 @@
  */
 
 import React, {
-  useState, useRef, useEffect, useCallback, useMemo,
+  useState, useRef, useEffect, useCallback,
 } from 'react';
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback,
@@ -44,6 +44,7 @@ import { LinearGradient }            from 'expo-linear-gradient';
 import { Ionicons }                  from '@expo/vector-icons';
 import Slider                        from '@react-native-community/slider';
 import { useSafeAreaInsets }         from 'react-native-safe-area-context';
+import videoService                  from '../services/VideoService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -102,6 +103,35 @@ const buildFeed = (v) => {
       song:'Drive It Like You Stole It',
       duration:60, likes:389000, comments:7890, reposts:1540, shares:22100, saves:4200, views:780000, isFollowing:true },
   ];
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAP BACKEND VIDEO → VideoItem format
+// ─────────────────────────────────────────────────────────────────────────────
+const mapApiVideo = (v) => {
+  const username = v.userId?.username || v.userId?.fullName || 'creator';
+  return {
+    id:          v._id  || v.id  || String(Math.random()),
+    uri:         v.videoUrl || v.uri || '',
+    user: {
+      name:   username,
+      avatar: v.userId?.profileImage || `https://i.pravatar.cc/150?u=${username}`,
+    },
+    title:       v.title       || '',
+    description: v.description || '',
+    song:        v.song        || `Original Sound – ${username}`,
+    duration:    v.duration    || 0,
+    likes:       v.likesCount  || 0,
+    comments:    v.commentsCount || 0,
+    reposts:     v.repostsCount  || 0,
+    shares:      v.sharesCount   || 0,
+    saves:       v.savesCount    || 0,
+    views:       v.viewsCount    || 0,
+    isFollowing: false,
+    isLiked:     v.isLiked  || false,
+    isSaved:     v.isSaved  || false,
+    videoId:     v._id      || v.id,
+  };
 };
 
 const MOCK_COMMENTS = [
@@ -609,13 +639,62 @@ const VideoItem = ({ item, isActive, onOpenComments, tabOffset }) => {
 // Your BottomTabNavigator renders the tab bar; this screen just clears space for it.
 // ─────────────────────────────────────────────────────────────────────────────
 export default function VideoPlayerScreen({ navigation, route }) {
-  const { video }   = route?.params || {};
-  const insets      = useSafeAreaInsets();
-  const FEED        = useMemo(() => buildFeed(video), []);
+  const { video }  = route?.params || {};
+  const insets     = useSafeAreaInsets();
   const flatListRef = useRef(null);
 
-  const [activeIndex,  setActiveIndex]  = useState(0);
-  const [showComments, setShowComments] = useState(false);
+  const [feed,        setFeed]        = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page,        setPage]        = useState(1);
+  const [hasMore,     setHasMore]     = useState(true);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [showComments,setShowComments]= useState(false);
+
+  // ── Fetch real videos from backend ─────────────────────────────────────────
+  const loadFeed = useCallback(async (pageNum, reset = false) => {
+    if (reset) setLoading(true); else setLoadingMore(true);
+
+    try {
+      const res = await videoService.getFeed(pageNum, 10, 'new');
+      if (res.success && res.videos?.length > 0) {
+        const mapped = res.videos.map(mapApiVideo).filter(v => !!v.uri);
+        setFeed(prev => reset ? mapped : [...prev, ...mapped]);
+        setHasMore(pageNum < (res.pagination?.pages ?? 1));
+        setPage(pageNum);
+      } else {
+        if (reset) {
+          // No real videos yet — fall back to sample content
+          setFeed(buildFeed(video));
+          setHasMore(false);
+        } else {
+          setHasMore(false);
+        }
+      }
+    } catch (_) {
+      if (reset) { setFeed(buildFeed(video)); setHasMore(false); }
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [video]);
+
+  useEffect(() => { loadFeed(1, true); }, []);
+
+  // If a specific video was deep-linked, scroll to it or prepend it
+  useEffect(() => {
+    if (!video) return;
+    const mapped = mapApiVideo(video);
+    if (!mapped.uri) return;
+    setFeed(prev => {
+      const exists = prev.some(v => v.id === mapped.id);
+      return exists ? prev : [mapped, ...prev];
+    });
+  }, [video]);
+
+  const loadMore = useCallback(() => {
+    if (!loadingMore && hasMore) loadFeed(page + 1);
+  }, [loadingMore, hasMore, page, loadFeed]);
 
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
     if (viewableItems.length > 0) {
@@ -624,10 +703,18 @@ export default function VideoPlayerScreen({ navigation, route }) {
     }
   }).current;
 
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold:55 }).current;
-
-  // Height your BottomTabNavigator occupies — must match tabBarStyle in BottomTabNavigator.js
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 55 }).current;
   const tabOffset = TAB_BAR_BASE + (insets.bottom > 0 ? insets.bottom : Platform.select({ ios:25, android:10 }));
+
+  if (loading) {
+    return (
+      <View style={{ flex:1, backgroundColor:'#000', alignItems:'center', justifyContent:'center' }}>
+        <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+        <ActivityIndicator size="large" color="white" />
+        <Text style={{ color:'#94a3b8', marginTop:12, fontSize:14 }}>Loading videos…</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex:1, backgroundColor:'#000' }}>
@@ -635,7 +722,7 @@ export default function VideoPlayerScreen({ navigation, route }) {
 
       <FlatList
         ref={flatListRef}
-        data={FEED}
+        data={feed}
         keyExtractor={i => i.id}
         renderItem={({ item, index }) => (
           <VideoItem
@@ -657,12 +744,28 @@ export default function VideoPlayerScreen({ navigation, route }) {
         windowSize={3}
         maxToRenderPerBatch={2}
         initialNumToRender={1}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={
+          loadingMore
+            ? <View style={{ height, backgroundColor:'#000', alignItems:'center', justifyContent:'center' }}>
+                <ActivityIndicator color="white" />
+              </View>
+            : null
+        }
+        ListEmptyComponent={
+          <View style={{ height, backgroundColor:'#000', alignItems:'center', justifyContent:'center' }}>
+            <Ionicons name="videocam-off-outline" size={48} color="#475569" />
+            <Text style={{ color:'#94a3b8', marginTop:12, fontSize:15 }}>No videos yet</Text>
+            <Text style={{ color:'#64748b', marginTop:6, fontSize:13 }}>Upload your first video to get started</Text>
+          </View>
+        }
       />
 
       <CommentSheet
         visible={showComments}
         onClose={() => setShowComments(false)}
-        commentCount={FEED[activeIndex]?.comments ?? 0}
+        commentCount={feed[activeIndex]?.comments ?? 0}
       />
     </View>
   );

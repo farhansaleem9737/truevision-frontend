@@ -71,9 +71,8 @@ export default function LoginScreen({ navigation }) {
       setLoading(false);
 
       if (result.success) {
-        // Navigation will happen automatically via AuthContext state change
-        // The App.js will detect isAuthenticated = true and switch to AppStack
-        Alert.alert('Success', 'Login successful!');
+        // Navigation happens automatically — AuthContext sets isAuthenticated = true
+        // and App.js switches to AppStack. No alert needed.
       } else {
         if (result.requiresVerification) {
           Alert.alert(

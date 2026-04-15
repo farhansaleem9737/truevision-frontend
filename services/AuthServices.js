@@ -1,15 +1,22 @@
 //truevision/services/AuthServices.js
 import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Update this with your backend URL
-const API_URL = "http://192.168.1.127:5000/api/auth" ;
-// For Android Emulator use: http://10.0.2.2:5000/api/auth
-// For physical device use your computer's IP: http://192.168.x.x:5000/api/auth
+const API_URL = "http://192.168.1.127:5000/api/auth";
+
+// Axios instance — attaches JWT automatically
+const api = axios.create({ baseURL: API_URL, timeout: 10000 });
+api.interceptors.request.use(async (config) => {
+  const token = await AsyncStorage.getItem('authToken');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
 
 const authService = {
   register: async (userData) => {
     try {
-      const response = await axios.post(`${API_URL}/register`, userData);
+      const response = await api.post('/register', userData);
       return response.data;
     } catch (error) {
       return error.response?.data || { success: false, message: 'Network error' };
@@ -18,10 +25,7 @@ const authService = {
 
   login: async (emailOrUsername, password) => {
     try {
-      const response = await axios.post(`${API_URL}/login`, {
-        emailOrUsername,
-        password
-      });
+      const response = await api.post('/login', { emailOrUsername, password });
       return response.data;
     } catch (error) {
       return error.response?.data || { success: false, message: 'Network error' };
@@ -30,10 +34,7 @@ const authService = {
 
   verifyEmail: async (email, otp) => {
     try {
-      const response = await axios.post(`${API_URL}/verify-email`, {
-        email,
-        otp
-      });
+      const response = await api.post('/verify-email', { email, otp });
       return response.data;
     } catch (error) {
       return error.response?.data || { success: false, message: 'Network error' };
@@ -42,7 +43,7 @@ const authService = {
 
   resendOTP: async (email) => {
     try {
-      const response = await axios.post(`${API_URL}/resend-otp`, { email });
+      const response = await api.post('/resend-otp', { email });
       return response.data;
     } catch (error) {
       return error.response?.data || { success: false, message: 'Network error' };
@@ -51,7 +52,7 @@ const authService = {
 
   forgotPassword: async (email) => {
     try {
-      const response = await axios.post(`${API_URL}/forgot-password`, { email });
+      const response = await api.post('/forgot-password', { email });
       return response.data;
     } catch (error) {
       return error.response?.data || { success: false, message: 'Network error' };
@@ -60,11 +61,7 @@ const authService = {
 
   resetPassword: async (email, otp, newPassword) => {
     try {
-      const response = await axios.post(`${API_URL}/reset-password`, {
-        email,
-        otp,
-        newPassword
-      });
+      const response = await api.post('/reset-password', { email, otp, newPassword });
       return response.data;
     } catch (error) {
       return error.response?.data || { success: false, message: 'Network error' };
@@ -73,16 +70,34 @@ const authService = {
 
   getProfile: async (token) => {
     try {
-      const response = await axios.get(`${API_URL}/me`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
+      const response = await api.get('/me', {
+        headers: { Authorization: `Bearer ${token}` },
       });
       return response.data;
     } catch (error) {
       return error.response?.data || { success: false, message: 'Network error' };
     }
-  }
+  },
+
+  // Get signed params to upload a profile image directly to Cloudinary
+  getProfileImageSignature: async () => {
+    try {
+      const response = await api.get('/profile-image-signature');
+      return response.data;
+    } catch (error) {
+      return error.response?.data || { success: false, message: 'Network error' };
+    }
+  },
+
+  // Update profile fields + optional profileImageUrl
+  updateProfile: async (data) => {
+    try {
+      const response = await api.put('/profile', data);
+      return response.data;
+    } catch (error) {
+      return error.response?.data || { success: false, message: 'Network error' };
+    }
+  },
 };
 
 export default authService;

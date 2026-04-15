@@ -1,253 +1,183 @@
-import React, { useState, useEffect, useRef } from 'react';
+// truevision/screens/DiscoverScreen.js
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  StatusBar,
-  Image,
-  Dimensions,
-  TextInput,
-  ActivityIndicator,
-  RefreshControl,
-  Animated,
+  View, Text, FlatList, TouchableOpacity, StatusBar,
+  Image, Dimensions, TextInput, ActivityIndicator,
+  RefreshControl, Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import pexelsService from '../services/pexelsService';
-import ScreenContainer from '../components/ScreenContainer';
+import { Ionicons }       from '@expo/vector-icons';
+import ScreenContainer    from '../components/ScreenContainer';
+import videoService       from '../services/VideoService';
 
 const { width } = Dimensions.get('window');
-const CARD_WIDTH = (width - 48) / 2;
+const CARD_W = (width - 48) / 2;
 
-export default function DiscoverScreen({ navigation, route }) {
-  const [videos, setVideos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState(route?.params?.category || 'nature');
-  const [selectedFilter, setSelectedFilter] = useState('all');
-  const [isSearchFocused, setIsSearchFocused] = useState(false);
+const FILTERS = [
+  { id: 'all',           label: 'All',          gradient: ['#667eea', '#764ba2'] },
+  { id: 'entertainment', label: 'Entertainment', gradient: ['#ec4899', '#db2777'] },
+  { id: 'music',         label: 'Music',         gradient: ['#8b5cf6', '#7c3aed'] },
+  { id: 'sports',        label: 'Sports',        gradient: ['#f97316', '#ea580c'] },
+  { id: 'gaming',        label: 'Gaming',        gradient: ['#06b6d4', '#0891b2'] },
+  { id: 'tech',          label: 'Tech',          gradient: ['#3b82f6', '#2563eb'] },
+  { id: 'food',          label: 'Food',          gradient: ['#ef4444', '#dc2626'] },
+  { id: 'travel',        label: 'Travel',        gradient: ['#10b981', '#059669'] },
+  { id: 'fashion',       label: 'Fashion',       gradient: ['#f59e0b', '#d97706'] },
+  { id: 'education',     label: 'Education',     gradient: ['#6366f1', '#4f46e5'] },
+];
+
+export default function DiscoverScreen({ navigation }) {
+  const [videos,       setVideos]       = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [refreshing,   setRefreshing]   = useState(false);
+  const [searchQuery,  setSearchQuery]  = useState('');
+  const [activeFilter, setActiveFilter] = useState('all');
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [page,         setPage]         = useState(1);
+  const [hasMore,      setHasMore]      = useState(true);
+  const [isSearchMode, setIsSearchMode] = useState(false);
 
   const searchScale = useRef(new Animated.Value(1)).current;
-
-  const filters = [
-    { id: 'all', label: '✨ All', query: 'nature', gradient: ['#667eea', '#764ba2'] },
-    { id: 'nature', label: '🌿 Nature', query: 'nature', gradient: ['#10b981', '#059669'] },
-    { id: 'tech', label: '💻 Tech', query: 'technology', gradient: ['#3b82f6', '#2563eb'] },
-    { id: 'people', label: '👥 People', query: 'people', gradient: ['#f59e0b', '#d97706'] },
-    { id: 'animals', label: '🐾 Animals', query: 'animals', gradient: ['#8b5cf6', '#7c3aed'] },
-    { id: 'food', label: '🍔 Food', query: 'food', gradient: ['#ef4444', '#dc2626'] },
-    { id: 'travel', label: '✈️ Travel', query: 'travel', gradient: ['#06b6d4', '#0891b2'] },
-    { id: 'sports', label: '⚽ Sports', query: 'sports', gradient: ['#f97316', '#ea580c'] },
-    { id: 'music', label: '🎵 Music', query: 'music', gradient: ['#ec4899', '#db2777'] },
-  ];
+  const searchTimer = useRef(null);
 
   useEffect(() => {
-    loadVideos();
-  }, [searchQuery]);
+    if (!isSearchMode) loadByCategory(1, true);
+  }, [activeFilter, isSearchMode]);
 
-  const loadVideos = async () => {
-    setLoading(true);
-    const result = await pexelsService.searchVideos(searchQuery, 1, 20);
-    
-    if (result.success) {
-      setVideos(result.data.videos || []);
-    } else {
-      setVideos(getMockVideos());
+  const loadByCategory = useCallback(async (p = 1, reset = false) => {
+    if (p === 1) setLoading(true);
+    const res = await videoService.getFeed(p, 20, 'random', activeFilter);
+    if (res.success) {
+      const items = res.videos || [];
+      setVideos(prev => reset ? items : [...prev, ...items]);
+      setHasMore(p < (res.pagination?.pages || 1));
+      setPage(p);
     }
     setLoading(false);
-  };
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadVideos();
     setRefreshing(false);
+  }, [activeFilter]);
+
+  const doSearch = useCallback(async (q, p = 1, reset = false) => {
+    if (!q.trim()) { setIsSearchMode(false); return; }
+    if (p === 1) setLoading(true);
+    const res = await videoService.searchVideos(q.trim(), p, 20, activeFilter);
+    if (res.success) {
+      const items = res.videos || [];
+      setVideos(prev => reset ? items : [...prev, ...items]);
+      setHasMore(p < (res.pagination?.pages || 1));
+      setPage(p);
+    }
+    setLoading(false);
+  }, [activeFilter]);
+
+  const handleSearchChange = (text) => {
+    setSearchQuery(text);
+    clearTimeout(searchTimer.current);
+    if (!text.trim()) { setIsSearchMode(false); loadByCategory(1, true); return; }
+    setIsSearchMode(true);
+    searchTimer.current = setTimeout(() => doSearch(text, 1, true), 500);
   };
 
-  const handleSearch = () => {
-    if (searchQuery.trim()) {
-      loadVideos();
-    }
-  };
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    if (isSearchMode) await doSearch(searchQuery, 1, true);
+    else              await loadByCategory(1, true);
+  }, [isSearchMode, searchQuery, doSearch, loadByCategory]);
 
   const handleFilterPress = (filter) => {
-    setSelectedFilter(filter.id);
-    setSearchQuery(filter.query);
+    setActiveFilter(filter.id);
+    setSearchQuery('');
+    setIsSearchMode(false);
   };
 
-  const handleSearchFocus = () => {
-    setIsSearchFocused(true);
-    Animated.spring(searchScale, {
-      toValue: 1.02,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const handleSearchBlur = () => {
-    setIsSearchFocused(false);
-    Animated.spring(searchScale, {
-      toValue: 1,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const getMockVideos = () => {
-    return Array.from({ length: 20 }, (_, i) => ({
-      id: i + 1,
-      user: {
-        name: `Creator ${i + 1}`,
-      },
-      video_files: [{
-        link: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-        quality: 'hd',
-      }],
-      video_pictures: [{
-        picture: `https://picsum.photos/seed/${1000 + i}/600/800`,
-      }],
-      duration: 15 + (i * 5),
-      width: 1920,
-      height: 1080,
-    }));
+  const renderCard = ({ item, index }) => {
+    const creator = item.userId?.username || item.userId?.fullName || 'creator';
+    return (
+      <TouchableOpacity
+        activeOpacity={0.88}
+        onPress={() => navigation.navigate('VideoPlayer', { video: item })}
+        style={{ width: CARD_W, marginLeft: index % 2 === 0 ? 0 : 12, marginBottom: 16 }}
+      >
+        <View style={{ borderRadius: 20, overflow: 'hidden', backgroundColor: 'white', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 5 }}>
+          <View style={{ height: CARD_W * 1.5, backgroundColor: '#1e293b' }}>
+            {item.thumbnailUrl ? (
+              <Image source={{ uri: item.thumbnailUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            ) : (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="play-circle" size={44} color="rgba(255,255,255,0.3)" />
+              </View>
+            )}
+            <LinearGradient colors={['transparent', 'rgba(0,0,0,0.75)']} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 90 }} />
+            <View style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 }}>
+              <Text style={{ color: 'white', fontSize: 10, fontWeight: '700' }}>
+                {Math.floor((item.duration || 0) / 60)}:{((item.duration || 0) % 60).toString().padStart(2, '0')}
+              </Text>
+            </View>
+            {item.category && (
+              <View style={{ position: 'absolute', bottom: 8, left: 8, backgroundColor: 'rgba(59,130,246,0.9)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 }}>
+                <Text style={{ color: 'white', fontSize: 9, fontWeight: '700', textTransform: 'capitalize' }}>{item.category}</Text>
+              </View>
+            )}
+            <View style={{ position: 'absolute', top: '50%', left: '50%', marginTop: -22, marginLeft: -22 }}>
+              <LinearGradient colors={['rgba(59,130,246,0.9)', 'rgba(139,92,246,0.9)']} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="play" size={20} color="white" style={{ marginLeft: 2 }} />
+              </LinearGradient>
+            </View>
+          </View>
+          <View style={{ padding: 10 }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a', marginBottom: 5, lineHeight: 17 }} numberOfLines={2}>
+              {item.title || `Video by @${creator}`}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center', marginRight: 5 }}>
+                <Text style={{ fontSize: 9, fontWeight: '700' }}>{creator.charAt(0).toUpperCase()}</Text>
+              </View>
+              <Text style={{ fontSize: 11, color: '#6b7280', fontWeight: '500' }} numberOfLines={1}>@{creator}</Text>
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
   };
 
   const renderHeader = () => (
-    <View style={{
-      backgroundColor: 'white',
-      paddingHorizontal: 24,
-      paddingTop: 16,
-      paddingBottom: 20,
-      borderBottomLeftRadius: 24,
-      borderBottomRightRadius: 24,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.05,
-      shadowRadius: 8,
-      elevation: 3,
-      marginBottom: 24,
-    }}>
-      {/* Title */}
-      <View style={{ marginBottom: 16 }}>
-        <Text style={{
-          fontSize: 32,
-          fontWeight: '900',
-          color: '#111827',
-          letterSpacing: -1,
-          marginBottom: 4,
-        }}>
-          Discover
-        </Text>
-        <Text style={{ fontSize: 14, color: '#6b7280' }}>
-          Explore thousands of authentic videos
-        </Text>
-      </View>
+    <View style={{ backgroundColor: 'white', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 20, borderBottomLeftRadius: 24, borderBottomRightRadius: 24, marginBottom: 24, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 3 }}>
+      <Text style={{ fontSize: 32, fontWeight: '900', color: '#0f172a', letterSpacing: -1, marginBottom: 4 }}>Discover</Text>
+      <Text style={{ fontSize: 14, color: '#6b7280', marginBottom: 16 }}>Explore authentic videos by category</Text>
 
-      {/* Search Bar */}
-      <Animated.View
-        style={{
-          transform: [{ scale: searchScale }],
-        }}
-      >
-        <View style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          backgroundColor: '#f3f4f6',
-          borderRadius: 16,
-          paddingHorizontal: 16,
-          paddingVertical: 14,
-          marginBottom: 16,
-          borderWidth: 2,
-          borderColor: isSearchFocused ? '#3b82f6' : 'transparent',
-        }}>
-          <Ionicons
-            name="search"
-            size={20}
-            color={isSearchFocused ? '#3b82f6' : '#9ca3af'}
-          />
+      <Animated.View style={{ transform: [{ scale: searchScale }] }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f3f4f6', borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12, marginBottom: 16, borderWidth: 2, borderColor: searchFocused ? '#3b82f6' : 'transparent' }}>
+          <Ionicons name="search" size={18} color={searchFocused ? '#3b82f6' : '#9ca3af'} />
           <TextInput
-            placeholder="Search videos, topics..."
+            placeholder="Search videos, topics, creators..."
             placeholderTextColor="#9ca3af"
             value={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={handleSearch}
-            onFocus={handleSearchFocus}
-            onBlur={handleSearchBlur}
-            style={{
-              flex: 1,
-              fontSize: 15,
-              color: '#111827',
-              marginLeft: 12,
-              fontWeight: '500',
-            }}
+            onChangeText={handleSearchChange}
+            onFocus={() => { setSearchFocused(true); Animated.spring(searchScale, { toValue: 1.02, useNativeDriver: true }).start(); }}
+            onBlur={() => { setSearchFocused(false); Animated.spring(searchScale, { toValue: 1, useNativeDriver: true }).start(); }}
+            style={{ flex: 1, fontSize: 14, color: '#0f172a', marginLeft: 10, fontWeight: '500' }}
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity
-              onPress={() => setSearchQuery('')}
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: 12,
-                backgroundColor: '#e5e7eb',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Ionicons name="close" size={16} color="#6b7280" />
+            <TouchableOpacity onPress={() => handleSearchChange('')} style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="close" size={14} color="#6b7280" />
             </TouchableOpacity>
           )}
         </View>
       </Animated.View>
 
-      {/* Filters */}
       <FlatList
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        data={filters}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingRight: 24 }}
+        horizontal showsHorizontalScrollIndicator={false}
+        data={FILTERS} keyExtractor={i => i.id}
+        contentContainerStyle={{ paddingRight: 8 }}
         renderItem={({ item }) => (
-          <TouchableOpacity
-            onPress={() => handleFilterPress(item)}
-            activeOpacity={0.8}
-            style={{ marginRight: 10 }}
-          >
-            {selectedFilter === item.id ? (
-              <LinearGradient
-                colors={item.gradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={{
-                  paddingHorizontal: 18,
-                  paddingVertical: 10,
-                  borderRadius: 14,
-                  shadowColor: item.gradient[0],
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: 0.3,
-                  shadowRadius: 8,
-                  elevation: 5,
-                }}
-              >
-                <Text style={{
-                  fontSize: 14,
-                  fontWeight: 'bold',
-                  color: 'white',
-                }}>
-                  {item.label}
-                </Text>
+          <TouchableOpacity onPress={() => handleFilterPress(item)} activeOpacity={0.8} style={{ marginRight: 10 }}>
+            {activeFilter === item.id ? (
+              <LinearGradient colors={item.gradient} style={{ paddingHorizontal: 16, paddingVertical: 9, borderRadius: 14 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: 'white' }}>{item.label}</Text>
               </LinearGradient>
             ) : (
-              <View style={{
-                paddingHorizontal: 18,
-                paddingVertical: 10,
-                borderRadius: 14,
-                backgroundColor: '#f3f4f6',
-              }}>
-                <Text style={{
-                  fontSize: 14,
-                  fontWeight: '600',
-                  color: '#6b7280',
-                }}>
-                  {item.label}
-                </Text>
+              <View style={{ paddingHorizontal: 16, paddingVertical: 9, borderRadius: 14, backgroundColor: '#f3f4f6' }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#6b7280' }}>{item.label}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -256,234 +186,37 @@ export default function DiscoverScreen({ navigation, route }) {
     </View>
   );
 
-  const renderVideoCard = ({ item, index }) => {
-    const thumbnail = item.video_pictures?.[0]?.picture || item.image;
-    const duration = item.duration ? Math.floor(item.duration) : 0;
-    const creator = item.user?.name || 'Unknown';
-
-    return (
-      <TouchableOpacity
-        activeOpacity={0.9}
-        onPress={() => navigation.navigate('VideoPlayer', { video: item })}
-        style={{
-          width: CARD_WIDTH,
-          marginLeft: index % 2 === 0 ? 0 : 12,
-          marginBottom: 16,
-        }}
-      >
-        <View style={{
-          borderRadius: 20,
-          overflow: 'hidden',
-          backgroundColor: 'white',
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.1,
-          shadowRadius: 12,
-          elevation: 5,
-        }}>
-          {/* Thumbnail */}
-          <View style={{ height: CARD_WIDTH * 1.5, position: 'relative' }}>
-            <Image
-              source={{ uri: thumbnail }}
-              style={{ width: '100%', height: '100%' }}
-              resizeMode="cover"
-            />
-            
-            {/* Gradient Overlay */}
-            <LinearGradient
-              colors={['transparent', 'rgba(0,0,0,0.8)']}
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                right: 0,
-                height: 100,
-                padding: 12,
-                justifyContent: 'flex-end',
-              }}
-            >
-              {/* Duration Badge */}
-              <View
-                style={{
-                  position: 'absolute',
-                  top: 12,
-                  right: 12,
-                  backgroundColor: 'rgba(0,0,0,0.8)',
-                  paddingHorizontal: 8,
-                  paddingVertical: 4,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.2)',
-                }}
-              >
-                <Text style={{ color: 'white', fontSize: 11, fontWeight: 'bold' }}>
-                  {duration}s
-                </Text>
-              </View>
-            </LinearGradient>
-
-            {/* Play Icon Overlay */}
-            <View
-              style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                marginTop: -28,
-                marginLeft: -28,
-              }}
-            >
-              <LinearGradient
-                colors={['rgba(59, 130, 246, 0.9)', 'rgba(139, 92, 246, 0.9)']}
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: 28,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  shadowColor: '#3b82f6',
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: 0.4,
-                  shadowRadius: 8,
-                  elevation: 8,
-                }}
-              >
-                <Ionicons name="play" size={24} color="white" style={{ marginLeft: 3 }} />
-              </LinearGradient>
-            </View>
-          </View>
-
-          {/* Info */}
-          <View style={{ padding: 12 }}>
-            <Text
-              style={{
-                fontSize: 14,
-                fontWeight: 'bold',
-                color: '#111827',
-                marginBottom: 8,
-                lineHeight: 18,
-              }}
-              numberOfLines={2}
-            >
-              {item.title || `Video by ${creator}`}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <View style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: 10,
-                  backgroundColor: '#e5e7eb',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 6,
-                }}>
-                  <Text style={{ fontSize: 10, fontWeight: 'bold' }}>
-                    {creator.charAt(0)}
-                  </Text>
-                </View>
-                <Text
-                  style={{
-                    fontSize: 12,
-                    color: '#6b7280',
-                    fontWeight: '500',
-                  }}
-                  numberOfLines={1}
-                >
-                  {creator}
-                </Text>
-              </View>
-            </View>
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderEmptyComponent = () => (
-    <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 80 }}>
-      <View style={{
-        width: 120,
-        height: 120,
-        borderRadius: 60,
-        backgroundColor: 'white',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 24,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 12,
-        elevation: 5,
-      }}>
-        <Ionicons name="videocam-off" size={48} color="#cbd5e1" />
-      </View>
-      <Text style={{
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#374151',
-        marginBottom: 8,
-      }}>
-        No Videos Found
-      </Text>
-      <Text style={{
-        fontSize: 14,
-        color: '#9ca3af',
-        textAlign: 'center',
-        paddingHorizontal: 48,
-        lineHeight: 20,
-      }}>
-        Try adjusting your search or filters to find what you're looking for
-      </Text>
-    </View>
-  );
-
   return (
     <ScreenContainer backgroundColor="#f8fafc" edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
 
-      {loading ? (
+      {loading && videos.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <View style={{
-            width: 80,
-            height: 80,
-            borderRadius: 40,
-            backgroundColor: 'white',
-            alignItems: 'center',
-            justifyContent: 'center',
-            shadowColor: '#3b82f6',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.2,
-            shadowRadius: 12,
-            elevation: 8,
-            marginBottom: 16,
-          }}>
-            <ActivityIndicator size="large" color="#3b82f6" />
-          </View>
-          <Text style={{ fontSize: 16, fontWeight: '600', color: '#6b7280' }}>
-            Loading videos...
-          </Text>
-          <Text style={{ fontSize: 13, color: '#9ca3af', marginTop: 4 }}>
-            Please wait
-          </Text>
+          <ActivityIndicator size="large" color="#3b82f6" />
+          <Text style={{ fontSize: 15, fontWeight: '600', color: '#6b7280', marginTop: 16 }}>Loading videos…</Text>
         </View>
       ) : (
         <FlatList
           ListHeaderComponent={renderHeader}
           data={videos}
-          keyExtractor={(item, index) => `${item.id}-${index}`}
+          keyExtractor={(item, i) => item._id || String(i)}
           numColumns={2}
           columnWrapperStyle={{ paddingHorizontal: 24 }}
-          contentContainerStyle={{ paddingBottom: 24 }}
-          renderItem={renderVideoCard}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#3b82f6"
-              colors={['#3b82f6']}
-            />
+          contentContainerStyle={{ paddingBottom: 100 }}
+          renderItem={renderCard}
+          onEndReached={() => { if (hasMore && !loading) { isSearchMode ? doSearch(searchQuery, page + 1) : loadByCategory(page + 1); } }}
+          onEndReachedThreshold={0.5}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3b82f6" />}
+          ListFooterComponent={hasMore && !loading ? <ActivityIndicator size="small" color="#3b82f6" style={{ marginVertical: 16 }} /> : null}
+          ListEmptyComponent={
+            <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 80 }}>
+              <Ionicons name="videocam-off" size={56} color="#cbd5e1" />
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#374151', marginTop: 16 }}>No Videos Found</Text>
+              <Text style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', paddingHorizontal: 48, marginTop: 8 }}>
+                Try a different category or search term
+              </Text>
+            </View>
           }
-          ListEmptyComponent={renderEmptyComponent}
           showsVerticalScrollIndicator={false}
         />
       )}

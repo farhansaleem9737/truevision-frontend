@@ -13,8 +13,9 @@ import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 
 // Import Main App screens
-import BottomTabNavigator from './navigation/BottomTabNavigator';
-import VideoPlayerScreen from './screens/VideoPlayerScreen';
+import BottomTabNavigator  from './navigation/BottomTabNavigator';
+import VideoPlayerScreen   from './screens/VideoPlayerScreen';
+import EditProfileScreen   from './screens/EditProfileScreen';
 
 import './global.css';
 
@@ -63,6 +64,15 @@ function AppStack() {
           animation: 'slide_from_bottom',
           gestureEnabled: true,
           gestureDirection: 'vertical',
+        }}
+      />
+
+      {/* Edit Profile */}
+      <Stack.Screen
+        name="EditProfile"
+        component={EditProfileScreen}
+        options={{
+          animation: 'slide_from_right',
         }}
       />
     </Stack.Navigator>
