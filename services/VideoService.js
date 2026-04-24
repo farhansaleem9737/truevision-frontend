@@ -1,8 +1,11 @@
 // truevision/services/VideoService.js
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { compressVideo, deleteTempFile } from '../utils/VideoCompressor';
+import { uploadInChunks, getFileSize }   from '../utils/ChunkUploader';
+import { API_URL } from './config';
 
-const BASE_URL = 'http://192.168.1.127:5000/api/videos';
+const BASE_URL = `${API_URL}/videos`;
 
 // ── Axios instance ────────────────────────────────────────────────────────────
 // Regular API calls: 30 s timeout
@@ -66,125 +69,169 @@ const videoService = {
 
   // ── UPLOAD ───────────────────────────────────────────────────────────────────
   /**
-   * Direct Cloudinary signed upload — avoids double network transfer.
-   * Flow: get signature from server → upload directly to Cloudinary → save record on server.
+   * Four-step upload pipeline with client-side compression and chunked upload.
    *
    * Progress stages:
-   *   0-94  uploading directly to Cloudinary
-   *   95    saving video record on server
-   *   100   done (set by caller on success)
+   *    0–29   Compressing (FFmpeg) — or jumps straight to 30 if skipped
+   *   30–94   Uploading to Cloudinary (chunked if ≥ 5 MB, direct XHR if smaller)
+   *   95–99   Saving video record on our server
+   *   100     Done (set by caller on success)
    *
    * @param {string}   videoUri    Local file URI from ImagePicker
-   * @param {object}   metadata    { title, description, song, tags, category, visibility, allowDownload }
+   * @param {object}   metadata    { title, description, song, tags, category,
+   *                                 visibility, allowDownload, mimeType, durationMs }
    * @param {function} onProgress  (percent: number) => void
    */
   uploadVideo: async (videoUri, metadata, onProgress) => {
-    const report = (pct) => { if (onProgress) onProgress(pct); };
+    const report = (pct) => { if (onProgress) onProgress(Math.round(pct)); };
 
-    // ── Step 1: get signed upload params from our server ───────────────────────
-    let sigData;
+    const CHUNKED_THRESHOLD = 5 * 1024 * 1024; // 5 MB — use chunked above this
+    let compressedUri = null; // track for cleanup
+
     try {
-      const sigRes = await api.post('/upload-signature', {
-        title:       metadata.title,
-        description: metadata.description || '',
-        tags:        metadata.tags        || '',
+
+      // ── Step 1: Compress (0-30%) ─────────────────────────────────────────────
+      report(0);
+      const compResult = await compressVideo(videoUri, {
+        onProgress: (p) => report(p),           // p is already 0-30
+        durationMs: metadata.durationMs || 0,
       });
-      if (!sigRes.data?.success) {
-        return { success: false, message: `[Auth] ${sigRes.data?.message || 'Server rejected the upload request'}` };
+
+      if (!compResult.success) {
+        // compressVideo never rejects, but guard anyway
+        return { success: false, message: '[Compress] Compression failed unexpectedly' };
       }
-      sigData = sigRes.data;
-    } catch (e) {
-      console.error('[Upload Step 1 Error]', e.message, e.response?.data);
-      if (e.code === 'ECONNREFUSED' || e.message?.includes('Network Error')) {
-        return { success: false, message: '[Connection] Cannot reach server. Make sure the backend is running and your phone is on the same Wi-Fi.' };
+
+      compressedUri = compResult.compressed ? compResult.uri : null; // only delete if we created it
+      const uploadUri = compResult.uri;
+
+      if (compResult.compressed) {
+        console.log('[Upload] Using compressed video:', uploadUri);
+      } else {
+        console.log('[Upload] Compression skipped — using original video');
       }
-      if (e.response?.status === 401) {
-        return { success: false, message: '[Auth] Session expired. Please log out and log in again.' };
+
+      // ── Step 2: Get signed upload params from our server ─────────────────────
+      let sigData;
+      try {
+        const sigRes = await api.post('/upload-signature', {
+          title:       metadata.title,
+          description: metadata.description || '',
+          tags:        metadata.tags        || '',
+        });
+        if (!sigRes.data?.success) {
+          return { success: false, message: `[Auth] ${sigRes.data?.message || 'Server rejected the upload request'}` };
+        }
+        sigData = sigRes.data;
+      } catch (e) {
+        console.error('[Upload Step 2 Error]', e.message, e.response?.data);
+        if (e.code === 'ECONNREFUSED' || e.message?.includes('Network Error')) {
+          return { success: false, message: '[Connection] Cannot reach server. Make sure the backend is running and your phone is on the same Wi-Fi.' };
+        }
+        if (e.response?.status === 401) {
+          return { success: false, message: '[Auth] Session expired. Please log out and log in again.' };
+        }
+        return { success: false, message: `[Auth] ${e.response?.data?.message || e.message || 'Could not start upload'}` };
       }
-      return { success: false, message: `[Auth] ${e.response?.data?.message || e.message || 'Could not start upload'}` };
-    }
 
-    const { signature, timestamp, folder, api_key, cloud_name } = sigData;
+      const { signature, timestamp, folder, api_key, cloud_name } = sigData;
+      const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloud_name}/video/upload`;
+      const mimeType      = metadata.mimeType || 'video/mp4';
+      const ext           = mimeType.split('/')[1] || 'mp4';
 
-    // ── Step 2: upload directly to Cloudinary via native XMLHttpRequest ────────
-    // React Native's XHR uses the device's native HTTP stack — handles large
-    // video files reliably and provides real upload progress events.
-    const mimeType      = metadata.mimeType || 'video/mp4';
-    const ext           = mimeType.split('/')[1] || 'mp4';
-    const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloud_name}/video/upload`;
+      // ── Step 3: Upload to Cloudinary (30-94%) ────────────────────────────────
+      let cl;
 
-    let cl;
-    try {
-      cl = await new Promise((resolve, reject) => {
-        const formData = new FormData();
-        // React Native handles { uri, type, name } as a real file read — not a plain object
-        formData.append('file',      { uri: videoUri, type: mimeType, name: `upload.${ext}` });
-        formData.append('api_key',   api_key);
-        formData.append('timestamp', String(timestamp));
-        formData.append('signature', signature);
-        formData.append('folder',    folder);
+      const fileSize = await getFileSize(uploadUri);
+      const useChunked = fileSize >= CHUNKED_THRESHOLD;
 
-        const xhr = new XMLHttpRequest();
+      console.log(`[Upload] File: ${(fileSize / 1024 / 1024).toFixed(1)} MB — ${useChunked ? 'chunked' : 'direct'} upload`);
 
-        // Real upload progress
-        xhr.upload.onprogress = (e) => {
-          if (e.total > 0) {
-            const pct = Math.min(Math.round((e.loaded / e.total) * 100), 94);
-            report(pct);
-          }
+      try {
+        if (useChunked) {
+          // ── Chunked upload (6 MB parts, with retry) ──────────────────────
+          cl = await uploadInChunks(uploadUri, cloudinaryUrl, sigData, {
+            onProgress: (p) => report(p), // already in 30-94 range
+          });
+
+        } else {
+          // ── Direct XHR upload ────────────────────────────────────────────
+          cl = await new Promise((resolve, reject) => {
+            const formData = new FormData();
+            formData.append('file',      { uri: uploadUri, type: mimeType, name: `upload.${ext}` });
+            formData.append('api_key',   api_key);
+            formData.append('timestamp', String(timestamp));
+            formData.append('signature', signature);
+            formData.append('folder',    folder);
+
+            const xhr = new XMLHttpRequest();
+
+            xhr.upload.onprogress = (e) => {
+              if (e.total > 0) {
+                // Map 0-100% → 30-94%
+                const pct = 30 + Math.round((e.loaded / e.total) * 64);
+                report(Math.min(pct, 94));
+              }
+            };
+
+            xhr.onload = () => {
+              let body;
+              try   { body = JSON.parse(xhr.responseText); }
+              catch (_) { return reject(new Error('Unreadable response from Cloudinary')); }
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(body);
+              } else {
+                reject(new Error(body?.error?.message || `HTTP ${xhr.status}`));
+              }
+            };
+
+            xhr.onerror   = () => reject(new Error('Network request failed — check your internet connection'));
+            xhr.ontimeout = () => reject(new Error('Upload timed out — try a shorter or smaller video'));
+
+            xhr.timeout = 600000; // 10 min
+            xhr.open('POST', cloudinaryUrl);
+            xhr.send(formData);
+          });
+        }
+
+        if (!cl?.public_id) {
+          return { success: false, message: '[Cloudinary] Upload finished but no video ID returned. Try again.' };
+        }
+
+      } catch (e) {
+        console.error('[Upload Step 3 Error]', e.message);
+        return { success: false, message: `[Cloudinary] ${e.message || 'Failed to upload video'}` };
+      }
+
+      report(95);
+
+      // ── Step 4: Save video record on our server (95-99%) ─────────────────────
+      try {
+        const { mimeType: _m, durationMs: _d, ...cleanMeta } = metadata;
+        const saveRes = await api.post('/create', {
+          publicId:  cl.public_id,
+          secureUrl: cl.secure_url,
+          duration:  cl.duration  || 0,
+          bytes:     cl.bytes     || 0,
+          format:    cl.format    || '',
+          width:     cl.width     || 0,
+          height:    cl.height    || 0,
+          ...cleanMeta,
+        });
+        return saveRes.data;
+      } catch (e) {
+        console.error('[Upload Step 4 Error]', e.message, e.response?.data);
+        return {
+          success: false,
+          message: `[Save] Video uploaded to cloud but could not save to database: ${e.response?.data?.message || e.message || 'Server error'}. Contact support with ID: ${cl.public_id}`,
         };
-
-        xhr.onload = () => {
-          let body;
-          try { body = JSON.parse(xhr.responseText); } catch (_) {
-            return reject(new Error('Unreadable response from Cloudinary'));
-          }
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(body);
-          } else {
-            reject(new Error(body?.error?.message || `HTTP ${xhr.status}`));
-          }
-        };
-
-        xhr.onerror   = () => reject(new Error('Network request failed — check your internet connection'));
-        xhr.ontimeout = () => reject(new Error('Upload timed out — try a shorter or smaller video'));
-
-        xhr.timeout = 600000; // 10 min
-        xhr.open('POST', cloudinaryUrl);
-        xhr.send(formData);
-      });
-
-      if (!cl?.public_id) {
-        return { success: false, message: '[Cloudinary] Upload finished but no video ID returned. Try again.' };
       }
-    } catch (e) {
-      console.error('[Upload Step 2 Error]', e.message);
-      return { success: false, message: `[Cloudinary] ${e.message || 'Failed to upload video'}` };
-    }
 
-    report(95);
-
-    // ── Step 3: save video record on our server ────────────────────────────────
-    try {
-      const { mimeType: _m, ...cleanMeta } = metadata; // strip internal fields
-      const saveRes = await api.post('/create', {
-        publicId:  cl.public_id,
-        secureUrl: cl.secure_url,
-        duration:  cl.duration  || 0,
-        bytes:     cl.bytes     || 0,
-        format:    cl.format    || '',
-        width:     cl.width     || 0,
-        height:    cl.height    || 0,
-        ...cleanMeta,
-      });
-      return saveRes.data;
-    } catch (e) {
-      console.error('[Upload Step 3 Error]', e.message, e.response?.data);
-      // Video IS on Cloudinary already — tell the user so they know it partially succeeded
-      return {
-        success: false,
-        message: `[Save] Video uploaded to cloud but could not save to database: ${e.response?.data?.message || e.message || 'Server error'}. Contact support with ID: ${cl.public_id}`,
-      };
+    } finally {
+      // Always clean up the compressed temp file (if we created one)
+      if (compressedUri) {
+        await deleteTempFile(compressedUri);
+      }
     }
   },
 

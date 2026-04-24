@@ -26,12 +26,22 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS
+# OS files
 .DS_Store
+Thumbs.db
 *.pem
 
+# Editor/IDE
+.idea/
+.vscode/
+
+# Test coverage
+coverage/
+
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo

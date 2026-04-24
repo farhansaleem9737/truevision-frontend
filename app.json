@@ -19,9 +19,12 @@
         "backgroundImage": "./assets/images/tv-icon.png",
         "monochromeImage": "./assets/images/tv-icon.png"
       },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false,
-      "package": "com.truevision.app"
+      "edgeToEdgeEnabled": false,
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "INTERNET"
+      ],
+      "package": "com.truevision.shorts"
     },
     "web": {
       "output": "single",
@@ -41,6 +44,11 @@
         }
       ],
       "expo-video"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "1b7eec3e-985e-468e-ae11-f851d28bb259"
+      }
+    }
   }
 }

@@ -87,8 +87,9 @@ export default function UploadScreen({ navigation }) {
       song:         song.trim(),
       category,
       visibility,
-      allowDownload,                             // boolean — NOT String()
-      mimeType:     videoAsset.mimeType || 'video/mp4', // real MIME type for Cloudinary
+      allowDownload,
+      mimeType:     videoAsset.mimeType  || 'video/mp4',
+      durationMs:   videoAsset.duration  || 0,   // used by VideoCompressor for progress estimation
     };
 
     const res = await videoService.uploadVideo(
@@ -321,22 +322,37 @@ export default function UploadScreen({ navigation }) {
               {/* Upload button */}
               {uploading ? (
                 <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2, marginBottom: 48 }}>
-                  <ActivityIndicator size="large" color="#3b82f6" />
+                  <ActivityIndicator
+                    size="large"
+                    color={progress < 30 ? '#f59e0b' : progress < 95 ? '#3b82f6' : '#22c55e'}
+                  />
+
+                  {/* Stage label */}
                   <Text style={{ fontWeight: '700', fontSize: 18, color: '#0f172a', marginTop: 14 }}>
                     {progress === 0
                       ? 'Preparing…'
+                      : progress < 30
+                      ? `Compressing… ${Math.round((progress / 30) * 100)}%`
                       : progress < 95
-                      ? `Uploading ${progress}%`
+                      ? `Uploading… ${Math.round(((progress - 30) / 64) * 100)}%`
                       : 'Saving…'}
                   </Text>
 
-                  {/* Animated progress bar */}
+                  {/* Progress bar — colour shifts by stage */}
                   <View style={{ width: '100%', height: 8, backgroundColor: '#e2e8f0', borderRadius: 4, marginTop: 16, overflow: 'hidden' }}>
-                    <View style={{ width: `${Math.min(progress, 100)}%`, height: '100%', backgroundColor: progress < 95 ? '#3b82f6' : '#22c55e', borderRadius: 4 }} />
+                    <View style={{
+                      width: `${Math.min(progress, 100)}%`,
+                      height: '100%',
+                      borderRadius: 4,
+                      backgroundColor: progress < 30 ? '#f59e0b' : progress < 95 ? '#3b82f6' : '#22c55e',
+                    }} />
                   </View>
 
+                  {/* Sub-label */}
                   <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 8, textAlign: 'center' }}>
-                    {progress < 95
+                    {progress < 30
+                      ? 'Reducing file size for faster upload — keep app open'
+                      : progress < 95
                       ? 'Uploading directly to cloud — keep app open'
                       : 'Finalizing your video record…'}
                   </Text>
@@ -344,7 +360,7 @@ export default function UploadScreen({ navigation }) {
                   {/* File size hint */}
                   {videoAsset?.fileSize ? (
                     <Text style={{ color: '#cbd5e1', fontSize: 11, marginTop: 4 }}>
-                      File: {(videoAsset.fileSize / (1024 * 1024)).toFixed(1)} MB
+                      Original: {(videoAsset.fileSize / (1024 * 1024)).toFixed(1)} MB
                     </Text>
                   ) : null}
                 </View>

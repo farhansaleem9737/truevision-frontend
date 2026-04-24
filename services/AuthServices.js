@@ -1,9 +1,9 @@
 //truevision/services/AuthServices.js
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_URL as BASE_API } from './config';
 
-// Update this with your backend URL
-const API_URL = "http://192.168.1.127:5000/api/auth";
+const API_URL = `${BASE_API}/auth`;
 
 // Axios instance — attaches JWT automatically
 const api = axios.create({ baseURL: API_URL, timeout: 10000 });

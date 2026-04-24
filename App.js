@@ -13,9 +13,11 @@ import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 
 // Import Main App screens
-import BottomTabNavigator  from './navigation/BottomTabNavigator';
-import VideoPlayerScreen   from './screens/VideoPlayerScreen';
-import EditProfileScreen   from './screens/EditProfileScreen';
+import BottomTabNavigator       from './navigation/BottomTabNavigator';
+import VideoPlayerScreen        from './screens/VideoPlayerScreen';
+import EditProfileScreen        from './screens/EditProfileScreen';
+import ChatConversationScreen   from './screens/ChatConversationScreen';
+import ShareVideoScreen         from './screens/ShareVideoScreen';
 
 import './global.css';
 
@@ -73,6 +75,24 @@ function AppStack() {
         component={EditProfileScreen}
         options={{
           animation: 'slide_from_right',
+        }}
+      />
+
+      {/* Chat Conversation */}
+      <Stack.Screen
+        name="ChatConversation"
+        component={ChatConversationScreen}
+        options={{
+          animation: 'slide_from_right',
+        }}
+      />
+
+      {/* Share Video in Chat */}
+      <Stack.Screen
+        name="ShareVideo"
+        component={ShareVideoScreen}
+        options={{
+          animation: 'slide_from_bottom',
         }}
       />
     </Stack.Navigator>

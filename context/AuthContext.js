@@ -1,6 +1,7 @@
 import { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../services/AuthServices';
+import socketService from '../services/SocketService';
 
 const AuthContext = createContext();
 
@@ -37,6 +38,8 @@ export const AuthProvider = ({ children }) => {
         setToken(storedToken);
         setUser(JSON.parse(storedUser));
         setIsAuthenticated(true);
+        // Connect Socket.IO for real-time chat
+        socketService.connect();
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -79,6 +82,9 @@ export const AuthProvider = ({ children }) => {
           AsyncStorage.setItem('authToken', response.data.token),
           AsyncStorage.setItem('userData', JSON.stringify(response.data.user)),
         ]).catch(e => console.error('AsyncStorage write error:', e));
+
+        // Connect Socket.IO for real-time chat
+        socketService.connect();
         
         return { 
           success: true, 
@@ -143,6 +149,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      socketService.disconnect();
       await clearAuthData();
       return { success: true };
     } catch (error) {

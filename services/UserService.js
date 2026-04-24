@@ -1,8 +1,9 @@
 // truevision/services/UserService.js
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_URL } from './config';
 
-const BASE_URL = 'http://192.168.1.127:5000/api/users';
+const BASE_URL = `${API_URL}/users`;
 
 const api = axios.create({ baseURL: BASE_URL, timeout: 30000 });
 
