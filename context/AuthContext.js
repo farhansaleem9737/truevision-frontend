@@ -13,6 +13,15 @@ export const useAuth = () => {
   return context;
 };
 
+// Normalise the user object so consumers can rely on `_id`. Older login
+// responses (and any data already in AsyncStorage) used `id` instead.
+const normalizeUser = (u) => {
+  if (!u) return u;
+  if (u._id) return u;
+  if (u.id)  return { ...u, _id: u.id };
+  return u;
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -35,9 +44,15 @@ export const AuthProvider = ({ children }) => {
       if (storedToken && storedUser) {
         // Trust the stored token immediately — no network call on startup.
         // This eliminates the server round-trip that was blocking the app.
+        const parsed = normalizeUser(JSON.parse(storedUser));
         setToken(storedToken);
-        setUser(JSON.parse(storedUser));
+        setUser(parsed);
         setIsAuthenticated(true);
+        // Heal stored data so future reads have `_id` even before the user
+        // touches anything that triggers updateUser.
+        if (parsed && !JSON.parse(storedUser)._id && parsed._id) {
+          AsyncStorage.setItem('userData', JSON.stringify(parsed)).catch(() => {});
+        }
         // Connect Socket.IO for real-time chat
         socketService.connect();
       }
@@ -72,24 +87,25 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.login(emailOrUsername, password);
 
       if (response.success) {
+        const normalized = normalizeUser(response.data.user);
         // Update state immediately — don't block on storage writes
         setToken(response.data.token);
-        setUser(response.data.user);
+        setUser(normalized);
         setIsAuthenticated(true);
 
         // Write both keys in parallel in the background
         Promise.all([
           AsyncStorage.setItem('authToken', response.data.token),
-          AsyncStorage.setItem('userData', JSON.stringify(response.data.user)),
+          AsyncStorage.setItem('userData', JSON.stringify(normalized)),
         ]).catch(e => console.error('AsyncStorage write error:', e));
 
         // Connect Socket.IO for real-time chat
         socketService.connect();
-        
-        return { 
-          success: true, 
+
+        return {
+          success: true,
           message: response.message,
-          user: response.data.user 
+          user: normalized,
         };
       } else {
         return { 
@@ -126,14 +142,14 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.verifyEmail(email, otp);
 
       if (response.success) {
-        // Update state immediately — don't block on storage writes
+        const normalized = normalizeUser(response.data.user);
         setToken(response.data.token);
-        setUser(response.data.user);
+        setUser(normalized);
         setIsAuthenticated(true);
 
         Promise.all([
           AsyncStorage.setItem('authToken', response.data.token),
-          AsyncStorage.setItem('userData', JSON.stringify(response.data.user)),
+          AsyncStorage.setItem('userData', JSON.stringify(normalized)),
         ]).catch(e => console.error('AsyncStorage write error:', e));
       }
 
@@ -163,7 +179,7 @@ export const AuthProvider = ({ children }) => {
 
   const updateUser = async (updatedData) => {
     try {
-      const updatedUser = { ...user, ...updatedData };
+      const updatedUser = normalizeUser({ ...user, ...updatedData });
       await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
       setUser(updatedUser);
       return { success: true };

@@ -1,33 +1,3 @@
-/**
- * VideoPlayerScreen.jsx
- *
- * Instagram Reels layout — pixel-matched to the reference screenshots.
- *
- * Layout (bottom → top):
- *  ┌─────────────────────────────────────────┐
- *  │  Your BottomTabNavigator (white, 65px)  │  ← rendered by navigator, NOT here
- *  ├─────────────────────────────────────────┤
- *  │  Progress bar (2px white line)          │
- *  ├──────────────────────┬──────────────────┤
- *  │  Creator avatar      │  ♥ Like          │
- *  │  @username  [Follow] │  💬 Comment      │
- *  │  Caption text        │  ↩  Repost       │
- *  │  more                │  ✈  Send         │
- *  │  👁 views • duration │  🔖 Save         │
- *  │  ♩ Song ticker       │  ⋮  More         │
- *  │                      │  🎵 Disc         │
- *  ├──────────────────────┴──────────────────┤
- *  │  Full-screen video (cover fit)          │
- *  │  Top-right: 🔊 mute button             │
- *  └─────────────────────────────────────────┘
- *
- * Key points:
- *  • NO custom BottomTabBar in this file — your BottomTabNavigator handles it.
- *  • We measure its height (TAB_BAR_BASE = 65) + insets and push everything up.
- *  • Uses expo-video + useEvent (no expo-av warnings).
- *  • fullscreenOptions replaces deprecated allowsFullscreen.
- */
-
 import React, {
   useState, useRef, useEffect, useCallback,
 } from 'react';
@@ -44,7 +14,9 @@ import { LinearGradient }            from 'expo-linear-gradient';
 import { Ionicons }                  from '@expo/vector-icons';
 import Slider                        from '@react-native-community/slider';
 import { useSafeAreaInsets }         from 'react-native-safe-area-context';
+import { useIsFocused }              from '@react-navigation/native';
 import videoService                  from '../services/VideoService';
+import { useAuth }                   from '../context/AuthContext';
 
 const { width, height } = Dimensions.get('window');
 
@@ -109,13 +81,19 @@ const buildFeed = (v) => {
 // MAP BACKEND VIDEO → VideoItem format
 // ─────────────────────────────────────────────────────────────────────────────
 const mapApiVideo = (v) => {
-  const username = v.userId?.username || v.userId?.fullName || 'creator';
+  // userId may arrive populated (object), as a raw ObjectId string, or absent.
+  const populated = v.userId && typeof v.userId === 'object' ? v.userId : null;
+  const username  = populated?.username || populated?.fullName || v.user?.name || 'creator';
+  // Never fall back to pravatar — it generates random faces that look like a
+  // different person. Empty string lets the UI render an initials placeholder.
+  const avatar    = populated?.profileImage || v.user?.avatar || '';
   return {
     id:          v._id  || v.id  || String(Math.random()),
     uri:         v.videoUrl || v.uri || '',
     user: {
-      name:   username,
-      avatar: v.userId?.profileImage || `https://i.pravatar.cc/150?u=${username}`,
+      name:       username,
+      avatar,
+      isVerified: !!(populated?.isVerified),
     },
     title:       v.title       || '',
     description: v.description || '',
@@ -131,6 +109,8 @@ const mapApiVideo = (v) => {
     isLiked:     v.isLiked  || false,
     isSaved:     v.isSaved  || false,
     videoId:     v._id      || v.id,
+    ownerId:     v.userId?._id || v.userId || null,
+    pinned:      !!v.pinned,
   };
 };
 
@@ -191,7 +171,7 @@ const HeartBurst = ({ visible, x, y }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SPINNING MUSIC DISC
 // ─────────────────────────────────────────────────────────────────────────────
-const SpinningDisc = ({ avatarUri, paused }) => {
+const SpinningDisc = ({ avatarUri, paused, fallbackInitial = '?' }) => {
   const spin    = useRef(new Animated.Value(0)).current;
   const animRef = useRef(null);
   useEffect(() => {
@@ -209,7 +189,13 @@ const SpinningDisc = ({ avatarUri, paused }) => {
     <Animated.View style={{ transform:[{ rotate }] }}>
       {/* Outer ring — gradient-style using border */}
       <View style={S.discOuter}>
-        <Image source={{ uri:avatarUri }} style={S.discImg} />
+        {avatarUri ? (
+          <Image source={{ uri:avatarUri }} style={S.discImg} />
+        ) : (
+          <View style={[S.discImg, { backgroundColor:'#3b82f6', alignItems:'center', justifyContent:'center' }]}>
+            <Text style={{ color:'#fff', fontWeight:'800', fontSize:20 }}>{fallbackInitial}</Text>
+          </View>
+        )}
         <View style={S.discHole} />
       </View>
     </Animated.View>
@@ -299,8 +285,9 @@ const CommentSheet = ({ visible, onClose, commentCount = 0 }) => {
     </View>
   );
 
-  // Bottom of sheet sits above our tab bar
-  const tabOffset = TAB_BAR_BASE + (insets.bottom > 0 ? insets.bottom : Platform.select({ ios:25, android:10 }));
+  // VideoPlayer is rendered above the tab navigator, so there is no tab bar
+  // beneath it. Only safe-area inset is needed.
+  const tabOffset = insets.bottom > 0 ? insets.bottom : Platform.select({ ios: 8, android: 8 });
 
   return (
     <>
@@ -366,7 +353,7 @@ const CommentSheet = ({ visible, onClose, commentCount = 0 }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLE VIDEO ITEM
 // ─────────────────────────────────────────────────────────────────────────────
-const VideoItem = ({ item, isActive, onOpenComments, tabOffset }) => {
+const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset, onMore }) => {
 
   // ── expo-video player ─────────────────────────────────────────────────────
   const player = useVideoPlayer(item.uri, (p) => {
@@ -387,27 +374,30 @@ const VideoItem = ({ item, isActive, onOpenComments, tabOffset }) => {
     return () => { s1.remove(); s2.remove(); };
   }, [player]);
 
-  // ── Playback control ──────────────────────────────────────────────────────
+  // ── Playback control — pause when screen unfocused (no background play) ──
   const [userPaused, setUserPaused]   = useState(false);
   useEffect(() => {
-    if (isActive && !userPaused) player.play();
+    if (isActive && isFocused && !userPaused) player.play();
     else player.pause();
-  }, [isActive, userPaused]);
+  }, [isActive, isFocused, userPaused, player]);
 
   // ── UI state ──────────────────────────────────────────────────────────────
-  const [isLiked,     setIsLiked]     = useState(false);
-  const [isSaved,     setIsSaved]     = useState(false);
+  const [isLiked,     setIsLiked]     = useState(item.isLiked ?? false);
+  const [isSaved,     setIsSaved]     = useState(item.isSaved ?? false);
+  const [isReposted,  setIsReposted]  = useState(item.isReposted ?? false);
   const [isMuted,     setIsMuted]     = useState(false);
   const [isFollowing, setIsFollowing] = useState(item.isFollowing ?? false);
   const [likes,       setLikes]       = useState(item.likes ?? 0);
   const [saves,       setSaves]       = useState(item.saves ?? 0);
+  const [reposts,     setReposts]     = useState(item.reposts ?? 0);
   const [captionFull, setCaptionFull] = useState(false);
   const [burst,       setBurst]       = useState({ visible:false, x:0, y:0 });
 
-  const likeAnim  = useRef(new Animated.Value(1)).current;
-  const saveAnim  = useRef(new Animated.Value(1)).current;
-  const pauseAnim = useRef(new Animated.Value(0)).current;
-  const lastTap   = useRef(0);
+  const likeAnim   = useRef(new Animated.Value(1)).current;
+  const saveAnim   = useRef(new Animated.Value(1)).current;
+  const repostAnim = useRef(new Animated.Value(1)).current;
+  const pauseAnim  = useRef(new Animated.Value(0)).current;
+  const lastTap    = useRef(0);
 
   const bounce = (anim) => Animated.sequence([
     Animated.spring(anim, { toValue:1.4, useNativeDriver:true, friction:4 }),
@@ -447,6 +437,21 @@ const VideoItem = ({ item, isActive, onOpenComments, tabOffset }) => {
     Alert.alert(next ? 'Saved' : 'Removed', next ? 'Added to your saved collection.' : 'Removed from saved.');
   };
 
+  const handleRepost = async () => {
+    if (!item.videoId) return;
+    const next = !isReposted;
+    setIsReposted(next);
+    setReposts(c => Math.max(0, next ? c + 1 : c - 1));
+    bounce(repostAnim);
+
+    const res = await videoService.toggleRepost(item.videoId);
+    if (!res.success) {
+      setIsReposted(!next);
+      setReposts(c => Math.max(0, !next ? c + 1 : c - 1));
+      Alert.alert('Repost failed', res.message || 'Try again later.');
+    }
+  };
+
   const handleShare = async () => {
     try { await Share.share({ message:`Check out "${item.title}" by @${creator}`, url:item.uri }); } catch (_) {}
   };
@@ -464,8 +469,10 @@ const VideoItem = ({ item, isActive, onOpenComments, tabOffset }) => {
   const progress  = duration > 0 ? currentTime / duration : 0;
   const nowPlaying= playerPlaying && !userPaused && isActive;
   const creator   = item.user?.name   || 'creator';
-  const avatar    = item.user?.avatar || 'https://i.pravatar.cc/150?img=1';
+  const avatar    = item.user?.avatar || '';      // empty → initials fallback
+  const isVerified= !!item.user?.isVerified;
   const song      = item.song         || `Original Sound – ${creator}`;
+  const initial   = (creator?.[0] || '?').toUpperCase();
 
   return (
     <View style={{ width, height, backgroundColor:'#000' }}>
@@ -559,9 +566,15 @@ const VideoItem = ({ item, isActive, onOpenComments, tabOffset }) => {
         </TouchableOpacity>
 
         {/* Repost */}
-        <TouchableOpacity style={S.actionItem}>
-          <Ionicons name="repeat-outline" size={28} color="white" />
-          <Text style={S.actionLabel}>{fmt(item.reposts)}</Text>
+        <TouchableOpacity onPress={handleRepost} style={S.actionItem}>
+          <Animated.View style={{ transform: [{ scale: repostAnim }] }}>
+            <Ionicons
+              name={isReposted ? 'repeat' : 'repeat-outline'}
+              size={28}
+              color={isReposted ? '#10b981' : 'white'}
+            />
+          </Animated.View>
+          <Text style={[S.actionLabel, isReposted && { color: '#10b981' }]}>{fmt(reposts)}</Text>
         </TouchableOpacity>
 
         {/* Send / Share */}
@@ -583,12 +596,12 @@ const VideoItem = ({ item, isActive, onOpenComments, tabOffset }) => {
         </TouchableOpacity>
 
         {/* More (⋮) */}
-        <TouchableOpacity style={[S.actionItem, { marginBottom:16 }]}>
+        <TouchableOpacity onPress={() => onMore?.(item)} style={[S.actionItem, { marginBottom:16 }]}>
           <Ionicons name="ellipsis-vertical" size={22} color="white" />
         </TouchableOpacity>
 
         {/* Spinning music disc */}
-        <SpinningDisc avatarUri={avatar} paused={!nowPlaying} />
+        <SpinningDisc avatarUri={avatar} paused={!nowPlaying} fallbackInitial={initial} />
       </View>
 
       {/* ── BOTTOM INFO PANEL  (left side, matching screenshot 1 layout) ── */}
@@ -596,8 +609,17 @@ const VideoItem = ({ item, isActive, onOpenComments, tabOffset }) => {
 
         {/* Creator row: avatar • @name • [Follow] */}
         <View style={S.creatorRow}>
-          <Image source={{ uri:avatar }} style={S.creatorAvatar} />
+          {avatar ? (
+            <Image source={{ uri:avatar }} style={S.creatorAvatar} />
+          ) : (
+            <View style={[S.creatorAvatar, { backgroundColor:'#3b82f6', alignItems:'center', justifyContent:'center' }]}>
+              <Text style={{ color:'#fff', fontWeight:'800', fontSize:13 }}>{initial}</Text>
+            </View>
+          )}
           <Text style={S.creatorName} numberOfLines={1}>@{creator}</Text>
+          {isVerified ? (
+            <Ionicons name="checkmark-circle" size={14} color="#3b82f6" style={{ marginLeft: 4 }} />
+          ) : null}
           {isFollowing ? (
             <View style={S.followingPill}>
               <Text style={S.followingText}>Following</Text>
@@ -639,58 +661,115 @@ const VideoItem = ({ item, isActive, onOpenComments, tabOffset }) => {
 // Your BottomTabNavigator renders the tab bar; this screen just clears space for it.
 // ─────────────────────────────────────────────────────────────────────────────
 export default function VideoPlayerScreen({ navigation, route }) {
-  const { video }  = route?.params || {};
+  // ─────────────────────────────────────────────────────────────────────────
+  // ALL HOOKS FIRST — React's rule-of-hooks requires every render to call the
+  // same hooks in the same order. Any early return below this block is safe.
+  // ─────────────────────────────────────────────────────────────────────────
+  const params       = route?.params || {};
+  const initialVideo = params?.video || null;
+  // When opened from a profile/list, the caller passes the whole array plus the
+  // tapped index. We render that exact list at exactly that position rather
+  // than reloading the public feed (which would scramble ordering and snap to 0).
+  const preloadedRaw   = Array.isArray(params?.videos) ? params.videos : null;
+  const initialIndex   = Number.isInteger(params?.initialIndex) ? params.initialIndex : 0;
+
   const insets     = useSafeAreaInsets();
+  const isFocused  = useIsFocused();
+  const { user: authUser } = useAuth();
   const flatListRef = useRef(null);
 
-  const [feed,        setFeed]        = useState([]);
-  const [loading,     setLoading]     = useState(true);
+  // Tracks whether the screen is still mounted — guards async setState calls.
+  const isMounted = useRef(true);
+  useEffect(() => () => { isMounted.current = false; }, []);
+
+  // Pre-mapped preloaded list, computed once on mount. Used for both the
+  // initial feed state and to gate the public-feed fetch.
+  const preloadedFeed = useRef(
+    preloadedRaw
+      ? preloadedRaw.map(mapApiVideo).filter((v) => !!v.uri)
+      : null
+  ).current;
+
+  const safeInitialIndex = Math.min(
+    Math.max(0, initialIndex),
+    Math.max(0, (preloadedFeed?.length || 1) - 1),
+  );
+
+  console.log('[VideoPlayer] mounted', {
+    preloaded:    preloadedFeed?.length || 0,
+    initialIndex: safeInitialIndex,
+    deepLinked:   !!initialVideo,
+  });
+
+  const [feed,        setFeed]        = useState(preloadedFeed || []);
+  const [loading,     setLoading]     = useState(!preloadedFeed);
   const [loadingMore, setLoadingMore] = useState(false);
   const [page,        setPage]        = useState(1);
-  const [hasMore,     setHasMore]     = useState(true);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [showComments,setShowComments]= useState(false);
+  const [hasMore,     setHasMore]     = useState(!preloadedFeed); // can't paginate a frozen list
+  const [activeIndex, setActiveIndex] = useState(safeInitialIndex);
+  const [showComments, setShowComments] = useState(false);
+  const [error,       setError]       = useState(null);
 
-  // ── Fetch real videos from backend ─────────────────────────────────────────
+  // ── Fetch videos from backend ───────────────────────────────────────────
   const loadFeed = useCallback(async (pageNum, reset = false) => {
     if (reset) setLoading(true); else setLoadingMore(true);
+    if (reset) setError(null);
 
     try {
       const res = await videoService.getFeed(pageNum, 10, 'new');
+      if (!isMounted.current) return;
+
       if (res.success && res.videos?.length > 0) {
-        const mapped = res.videos.map(mapApiVideo).filter(v => !!v.uri);
-        setFeed(prev => reset ? mapped : [...prev, ...mapped]);
+        const mapped = res.videos.map(mapApiVideo).filter((v) => !!v.uri);
+        setFeed((prev) => (reset ? mapped : [...prev, ...mapped]));
         setHasMore(pageNum < (res.pagination?.pages ?? 1));
         setPage(pageNum);
-      } else {
-        if (reset) {
-          // No real videos yet — fall back to sample content
-          setFeed(buildFeed(video));
-          setHasMore(false);
+      } else if (reset) {
+        // No real videos came back — fall back to sample content if a deep-linked
+        // video was passed, otherwise show empty state.
+        if (initialVideo) {
+          setFeed(buildFeed(initialVideo));
         } else {
-          setHasMore(false);
+          setFeed([]);
         }
+        setHasMore(false);
+      } else {
+        setHasMore(false);
       }
-    } catch (_) {
-      if (reset) { setFeed(buildFeed(video)); setHasMore(false); }
+    } catch (e) {
+      if (!isMounted.current) return;
+      console.log('[VideoPlayer] loadFeed error:', e?.message);
+      if (reset) {
+        setError(e?.message || 'Could not load videos');
+        if (initialVideo) setFeed(buildFeed(initialVideo));
+        setHasMore(false);
+      }
     } finally {
+      if (!isMounted.current) return;
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [video]);
+  }, [initialVideo]);
 
-  useEffect(() => { loadFeed(1, true); }, []);
-
-  // If a specific video was deep-linked, scroll to it or prepend it
+  // Initial load (one-shot). Skipped when the caller pre-supplied a list.
   useEffect(() => {
-    if (!video) return;
-    const mapped = mapApiVideo(video);
+    if (preloadedFeed) return;
+    loadFeed(1, true);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
+
+  // Deep-linked single video — prepend it once when no preloaded list exists.
+  // (When a list is passed the tapped video is already inside it.)
+  useEffect(() => {
+    if (preloadedFeed) return;
+    if (!initialVideo) return;
+    const mapped = mapApiVideo(initialVideo);
     if (!mapped.uri) return;
-    setFeed(prev => {
-      const exists = prev.some(v => v.id === mapped.id);
+    setFeed((prev) => {
+      const exists = prev.some((v) => v.id === mapped.id);
       return exists ? prev : [mapped, ...prev];
     });
-  }, [video]);
+  }, [initialVideo, preloadedFeed]);
 
   const loadMore = useCallback(() => {
     if (!loadingMore && hasMore) loadFeed(page + 1);
@@ -704,14 +783,137 @@ export default function VideoPlayerScreen({ navigation, route }) {
   }).current;
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 55 }).current;
-  const tabOffset = TAB_BAR_BASE + (insets.bottom > 0 ? insets.bottom : Platform.select({ ios:25, android:10 }));
 
+  // VideoPlayer is rendered above the bottom-tab navigator (no tab bar shows
+  // beneath it), so layouts only need the safe-area inset. Adding TAB_BAR_BASE
+  // here was leaving ~65px of empty black space below the action column.
+  const tabOffset = insets.bottom > 0 ? insets.bottom : Platform.select({ ios: 8, android: 8 });
+
+  // ── Three-dot menu — Delete + Pin for the owner, Report otherwise ─────
+  const handleMore = useCallback((item) => {
+    const isOwner = authUser?._id && item.ownerId && (item.ownerId === authUser._id);
+
+    const ownerOptions = [
+      {
+        text: item.pinned ? 'Unpin from profile' : 'Pin to profile',
+        onPress: async () => {
+          const next = !item.pinned;
+          setFeed((prev) => prev.map((v) => v.id === item.id ? { ...v, pinned: next } : v));
+          const res = await videoService.togglePin(item.videoId, next);
+          if (!isMounted.current) return;
+          if (!res.success) {
+            setFeed((prev) => prev.map((v) => v.id === item.id ? { ...v, pinned: !next } : v));
+            Alert.alert('Could not update pin', res.message || 'Try again later.');
+          }
+        },
+      },
+      {
+        text: 'Delete video',
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert(
+            'Delete video',
+            'This will permanently remove the video. This cannot be undone.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete', style: 'destructive',
+                onPress: async () => {
+                  let removed = null;
+                  let removedAt = -1;
+                  setFeed((prev) => {
+                    removedAt = prev.findIndex((v) => v.id === item.id);
+                    removed   = removedAt >= 0 ? prev[removedAt] : null;
+                    return prev.filter((v) => v.id !== item.id);
+                  });
+                  const res = await videoService.deleteVideo(item.videoId);
+                  if (!isMounted.current) return;
+                  if (!res.success && removed) {
+                    setFeed((prev) => {
+                      const next = [...prev];
+                      next.splice(Math.max(0, removedAt), 0, removed);
+                      return next;
+                    });
+                    Alert.alert('Delete failed', res.message || 'Try again later.');
+                  }
+                },
+              },
+            ],
+          );
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ];
+
+    const guestOptions = [
+      { text: 'Report', style: 'destructive', onPress: () => Alert.alert('Reported', 'Thanks — we\'ll review this content.') },
+      { text: 'Share', onPress: async () => { try { await Share.share({ message: `Check out "${item.title || ''}"`, url: item.uri || '' }); } catch {} } },
+      { text: 'Cancel', style: 'cancel' },
+    ];
+
+    Alert.alert(
+      isOwner ? 'Video options' : 'More',
+      undefined,
+      isOwner ? ownerOptions : guestOptions,
+    );
+  }, [authUser?._id, navigation]);
+
+  // Stable referential identity for renderItem so VideoItem doesn't re-mount each render.
+  const renderItem = useCallback(({ item, index }) => (
+    <VideoItem
+      item={item}
+      isActive={index === activeIndex && !showComments}
+      isFocused={isFocused}
+      onOpenComments={() => setShowComments(true)}
+      tabOffset={tabOffset}
+      onMore={handleMore}
+    />
+  ), [activeIndex, showComments, isFocused, handleMore, tabOffset]);
+
+  // Safe key extraction — prefer stable id, fall back to index for legacy items.
+  const keyExtractor = useCallback(
+    (item, index) => (item?.id ? String(item.id) : `idx-${index}`),
+    [],
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // EARLY RETURNS — all hooks above are guaranteed to run on every render.
+  // ─────────────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <View style={{ flex:1, backgroundColor:'#000', alignItems:'center', justifyContent:'center' }}>
+      <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
         <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
         <ActivityIndicator size="large" color="white" />
-        <Text style={{ color:'#94a3b8', marginTop:12, fontSize:14 }}>Loading videos…</Text>
+        <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 14 }}>Loading videos…</Text>
+      </View>
+    );
+  }
+
+  if (error && feed.length === 0) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+        <Ionicons name="cloud-offline-outline" size={48} color="rgba(255,255,255,0.6)" />
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 14 }}>Couldn't load videos</Text>
+        <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 6, textAlign: 'center' }}>{error}</Text>
+        <TouchableOpacity
+          onPress={() => loadFeed(1, true)}
+          activeOpacity={0.85}
+          style={{ marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 22, backgroundColor: '#3b82f6' }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '800' }}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!feed.length) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+        <Ionicons name="videocam-off-outline" size={48} color="rgba(255,255,255,0.4)" />
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 14 }}>No videos available</Text>
+        <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 6 }}>Pull down to refresh</Text>
       </View>
     );
   }
@@ -723,15 +925,8 @@ export default function VideoPlayerScreen({ navigation, route }) {
       <FlatList
         ref={flatListRef}
         data={feed}
-        keyExtractor={i => i.id}
-        renderItem={({ item, index }) => (
-          <VideoItem
-            item={item}
-            isActive={index === activeIndex && !showComments}
-            onOpenComments={() => setShowComments(true)}
-            tabOffset={tabOffset}
-          />
-        )}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
         pagingEnabled
         showsVerticalScrollIndicator={false}
         snapToInterval={height}
@@ -739,11 +934,20 @@ export default function VideoPlayerScreen({ navigation, route }) {
         decelerationRate="fast"
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
-        getItemLayout={(_, i) => ({ length:height, offset:height * i, index:i })}
+        getItemLayout={(_, i) => ({ length: height, offset: height * i, index: i })}
+        // Open the player exactly on the tapped tile's video. Because getItemLayout
+        // is defined, FlatList can jump immediately without measuring rows.
+        initialScrollIndex={safeInitialIndex}
+        // Render enough items up-front so the target row is mounted on first paint.
+        initialNumToRender={Math.max(safeInitialIndex + 1, 1)}
+        // Defensive fallback — if a measurement glitch ever fires, scroll manually.
+        onScrollToIndexFailed={(info) => {
+          const offset = height * info.index;
+          flatListRef.current?.scrollToOffset?.({ offset, animated: false });
+        }}
         scrollEnabled={!showComments}
         windowSize={3}
         maxToRenderPerBatch={2}
-        initialNumToRender={1}
         onEndReached={loadMore}
         onEndReachedThreshold={0.4}
         ListFooterComponent={

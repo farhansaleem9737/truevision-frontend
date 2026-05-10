@@ -130,6 +130,26 @@ const userService = {
       return { success: false, message: e.response?.data?.message || 'Network error' };
     }
   },
+
+  // ── Search users by name / username ─────────────────────────────────────────
+  searchUsers: async (q) => {
+    try {
+      const res = await api.get('/search', { params: { q } });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error', users: [] };
+    }
+  },
+
+  // ── Update preferences (privacy / notifications / content / language) ──────
+  updatePreferences: async (patch) => {
+    try {
+      const res = await api.put('/preferences', patch);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error' };
+    }
+  },
 };
 
 export default userService;

@@ -2,12 +2,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, Image, TextInput,
-  StyleSheet, ActivityIndicator, Keyboard,
+  StyleSheet, ActivityIndicator, Keyboard, StatusBar,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import chatService   from '../services/ChatService';
 import socketService from '../services/SocketService';
 
@@ -34,7 +35,7 @@ const getInitials = (name) => {
 // Chat Row
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ChatRow = ({ item, onPress, online }) => {
+const ChatRow = ({ item, onPress, online, colors }) => {
   const u = item.otherUser || {};
   const unread = item.unreadCount || 0;
 
@@ -48,9 +49,9 @@ const ChatRow = ({ item, onPress, online }) => {
             <Text style={S.avatarInitials}>{getInitials(u.fullName)}</Text>
           </View>
         )}
-        {online && <View style={S.onlineDot} />}
+        {online && <View style={[S.onlineDot, { borderColor: colors.bg }]} />}
         {unread > 0 && (
-          <View style={S.badge}>
+          <View style={[S.badge, { borderColor: colors.bg }]}>
             <Text style={S.badgeText}>{unread > 9 ? '9+' : unread}</Text>
           </View>
         )}
@@ -58,13 +59,22 @@ const ChatRow = ({ item, onPress, online }) => {
 
       <View style={S.chatContent}>
         <View style={S.chatHeader}>
-          <Text style={[S.username, unread > 0 && S.usernameUnread]} numberOfLines={1}>
+          <Text
+            style={[S.username, { color: colors.text }, unread > 0 && S.usernameUnread]}
+            numberOfLines={1}
+          >
             {u.username || 'user'}
           </Text>
-          <Text style={S.time}>{timeAgo(item.lastMessage?.createdAt || item.updatedAt)}</Text>
+          <Text style={[S.time, { color: colors.textDim }]}>
+            {timeAgo(item.lastMessage?.createdAt || item.updatedAt)}
+          </Text>
         </View>
         <Text
-          style={[S.lastMsg, unread > 0 && S.lastMsgUnread]}
+          style={[
+            S.lastMsg,
+            { color: colors.textMuted },
+            unread > 0 && { color: colors.text, fontWeight: '600' },
+          ]}
           numberOfLines={1}
         >
           {item.lastMessage?.text || 'Tap to start chatting'}
@@ -78,7 +88,7 @@ const ChatRow = ({ item, onPress, online }) => {
 // Search Result Row
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SearchRow = ({ user, onPress }) => (
+const SearchRow = ({ user, onPress, colors }) => (
   <TouchableOpacity style={S.chatRow} activeOpacity={0.7} onPress={onPress}>
     <View style={S.avatarWrap}>
       {user.profileImage ? (
@@ -90,8 +100,8 @@ const SearchRow = ({ user, onPress }) => (
       )}
     </View>
     <View style={S.chatContent}>
-      <Text style={S.username}>{user.username}</Text>
-      <Text style={S.lastMsg} numberOfLines={1}>{user.fullName}</Text>
+      <Text style={[S.username, { color: colors.text }]}>{user.username}</Text>
+      <Text style={[S.lastMsg, { color: colors.textMuted }]} numberOfLines={1}>{user.fullName}</Text>
     </View>
   </TouchableOpacity>
 );
@@ -102,6 +112,7 @@ const SearchRow = ({ user, onPress }) => (
 
 export default function ChatScreen() {
   const insets     = useSafeAreaInsets();
+  const { colors } = useTheme();
   const navigation = useNavigation();
   const { user }   = useAuth();
 
@@ -117,7 +128,17 @@ export default function ChatScreen() {
   // ── Load chats on focus ──────────────────────────────────────────────────
   const loadChats = useCallback(async () => {
     const res = await chatService.getMyChats();
-    if (res.success) setChats(res.chats);
+    if (res.success) {
+      setChats(res.chats);
+      setOnlineUsers((prev) => {
+        const next = new Set(prev);
+        res.chats.forEach((c) => {
+          const id = c.otherUser?._id;
+          if (id && c.otherUser?.isOnline) next.add(id);
+        });
+        return next;
+      });
+    }
     setLoading(false);
   }, []);
 
@@ -213,22 +234,24 @@ export default function ChatScreen() {
   const isSearching = searchQuery.trim().length > 0;
 
   return (
-    <View style={[S.container, { paddingTop: insets.top }]}>
+    <View style={[S.container, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
+      <StatusBar barStyle={colors.statusBarStyle} backgroundColor={colors.bg} />
+
       {/* Header */}
-      <View style={S.header}>
-        <Text style={S.headerTitle}>Messages</Text>
+      <View style={[S.header, { borderBottomColor: colors.divider }]}>
+        <Text style={[S.headerTitle, { color: colors.text }]}>Messages</Text>
         <TouchableOpacity style={S.newBtn} onPress={() => {/* future: new chat modal */}}>
-          <Ionicons name="create-outline" size={24} color="#111827" />
+          <Ionicons name="create-outline" size={24} color={colors.text} />
         </TouchableOpacity>
       </View>
 
       {/* Search bar */}
-      <View style={S.searchWrap}>
-        <Ionicons name="search" size={18} color="#94a3b8" style={{ marginRight: 8 }} />
+      <View style={[S.searchWrap, { backgroundColor: colors.iconChipBg }]}>
+        <Ionicons name="search" size={18} color={colors.textDim} style={{ marginRight: 8 }} />
         <TextInput
-          style={S.searchInput}
+          style={[S.searchInput, { color: colors.text }]}
           placeholder="Search users..."
-          placeholderTextColor="#94a3b8"
+          placeholderTextColor={colors.textDim}
           value={searchQuery}
           onChangeText={handleSearch}
           returnKeyType="search"
@@ -237,7 +260,7 @@ export default function ChatScreen() {
         />
         {searchQuery.length > 0 && (
           <TouchableOpacity onPress={() => handleSearch('')}>
-            <Ionicons name="close-circle" size={18} color="#94a3b8" />
+            <Ionicons name="close-circle" size={18} color={colors.textDim} />
           </TouchableOpacity>
         )}
       </View>
@@ -245,25 +268,25 @@ export default function ChatScreen() {
       {/* Search results */}
       {isSearching ? (
         searching ? (
-          <ActivityIndicator style={{ marginTop: 40 }} color="#3b82f6" />
+          <ActivityIndicator style={{ marginTop: 40 }} color={colors.accent} />
         ) : (
           <FlatList
             data={searchResults}
             keyExtractor={(item) => item._id}
             renderItem={({ item }) => (
-              <SearchRow user={item} onPress={() => openChatWithUser(item)} />
+              <SearchRow user={item} colors={colors} onPress={() => openChatWithUser(item)} />
             )}
             contentContainerStyle={{ paddingBottom: 120 }}
             ListEmptyComponent={
               <View style={S.empty}>
-                <Ionicons name="person-outline" size={48} color="#cbd5e1" />
-                <Text style={S.emptyText}>No users found</Text>
+                <Ionicons name="person-outline" size={48} color={colors.textDim} />
+                <Text style={[S.emptyText, { color: colors.textMuted }]}>No users found</Text>
               </View>
             }
           />
         )
       ) : loading ? (
-        <ActivityIndicator style={{ marginTop: 60 }} size="large" color="#3b82f6" />
+        <ActivityIndicator style={{ marginTop: 60 }} size="large" color={colors.accent} />
       ) : (
         /* Chat list */
         <FlatList
@@ -272,18 +295,19 @@ export default function ChatScreen() {
           renderItem={({ item }) => (
             <ChatRow
               item={item}
+              colors={colors}
               online={onlineUsers.has(item.otherUser?._id)}
               onPress={() => openChat(item._id, item.otherUser)}
             />
           )}
           contentContainerStyle={{ paddingBottom: 120 }}
           showsVerticalScrollIndicator={false}
-          ItemSeparatorComponent={() => <View style={S.separator} />}
+          ItemSeparatorComponent={() => <View style={[S.separator, { backgroundColor: colors.divider }]} />}
           ListEmptyComponent={
             <View style={S.empty}>
-              <Ionicons name="chatbubbles-outline" size={64} color="#cbd5e1" />
-              <Text style={S.emptyTitle}>No messages yet</Text>
-              <Text style={S.emptyText}>Search for a user to start chatting</Text>
+              <Ionicons name="chatbubbles-outline" size={64} color={colors.textDim} />
+              <Text style={[S.emptyTitle, { color: colors.text }]}>No messages yet</Text>
+              <Text style={[S.emptyText, { color: colors.textMuted }]}>Search for a user to start chatting</Text>
             </View>
           }
         />
@@ -294,8 +318,8 @@ export default function ChatScreen() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
-  container:       { flex: 1, backgroundColor: '#fff' },
-  header:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  container:       { flex: 1 }, // backgroundColor injected from theme at runtime
+  header:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
   headerTitle:     { fontSize: 22, fontWeight: '800', color: '#111827' },
   newBtn:          { padding: 4 },
 

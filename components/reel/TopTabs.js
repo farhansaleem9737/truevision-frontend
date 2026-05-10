@@ -1,18 +1,18 @@
-// components/reel/TopTabs.js  —  TikTok-style Following / Friends tabs
+// components/reel/TopTabs.js  —  TikTok-style Trending / Following tabs
 import { useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Animated, StyleSheet } from 'react-native';
 
 const TABS = [
+  { key: 'trending',  label: 'Trending'  },
   { key: 'following', label: 'Following' },
-  { key: 'friends',   label: 'Friends'   },
 ];
 
 export default function TopTabs({ active, onChange, style }) {
-  const slide = useRef(new Animated.Value(active === 'following' ? 0 : 1)).current;
+  const slide = useRef(new Animated.Value(active === 'trending' ? 0 : 1)).current;
 
   useEffect(() => {
     Animated.spring(slide, {
-      toValue: active === 'following' ? 0 : 1,
+      toValue: active === 'trending' ? 0 : 1,
       useNativeDriver: true,
       friction: 20,
       tension: 180,
@@ -21,7 +21,7 @@ export default function TopTabs({ active, onChange, style }) {
 
   const translateX = slide.interpolate({
     inputRange:  [0, 1],
-    outputRange: [-40, 40],
+    outputRange: [-44, 44],
   });
 
   return (
@@ -42,7 +42,6 @@ export default function TopTabs({ active, onChange, style }) {
         })}
       </View>
 
-      {/* Animated underline */}
       <Animated.View style={[S.indicator, { transform: [{ translateX }] }]} />
     </View>
   );

@@ -1,16 +1,43 @@
 // components/reel/ReelCard.js  —  Single full-screen reel with video + interactions
+//
+// Renders both your uploaded videos and external sources (Pixabay / Pexels).
+// For any external item (item.source !== 'truevision'):
+//   • likes / saves / shares update local state only — no backend call (the video isn't in our DB)
+//   • saves persist to AsyncStorage so they survive reloads
+//   • follow is local-only
+//   • everything else (UI, animations, comments button, more button) is identical
+//
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, TouchableWithoutFeedback, Animated, Share, Alert,
   StyleSheet, Dimensions, ActivityIndicator,
 } from 'react-native';
+import AsyncStorage          from '@react-native-async-storage/async-storage';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { Image as ExpoImage } from 'expo-image';
 import { useEvent }          from 'expo';
 import { LinearGradient }    from 'expo-linear-gradient';
 import { Ionicons }          from '@expo/vector-icons';
 import ActionButtons         from './ActionButtons';
 import CaptionSection        from './CaptionSection';
+import MoreSheet             from './MoreSheet';
 import videoService          from '../../services/VideoService';
+import { pickVideoUrl }      from '../../utils/videoQuality';
+import usePreferences        from '../../hooks/usePreferences';
+
+const PEXELS_SAVES_KEY = '@truevision:pexels-saves';
+
+// Read/write the persisted set of saved Pexels video IDs.
+const loadSavedSet = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(PEXELS_SAVES_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch { return new Set(); }
+};
+const persistSavedSet = async (set) => {
+  try { await AsyncStorage.setItem(PEXELS_SAVES_KEY, JSON.stringify([...set])); }
+  catch {}
+};
 
 const { width, height } = Dimensions.get('window');
 
@@ -42,15 +69,34 @@ const HeartBurst = ({ visible, x, y }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-export default function ReelCard({ item, isActive, onOpenComments, bottomOffset }) {
+export default function ReelCard({ item, isActive, isFocused = true, onOpenComments, onHide, bottomOffset }) {
+  // External = anything that isn't an own upload (Pixabay, Pexels, etc.).
+  // External items skip backend mutations: likes/saves/etc. live in local
+  // state only because the videos aren't in our database.
+  const isExternal = item.source && item.source !== 'truevision';
+  const { prefs } = usePreferences();
+
   // ── Video player ────────────────────────────────────────────────────────
-  const videoUrl = item.videoUrl || item.uri || '';
+  // Prefer a Cloudinary-encoded 720p (or 480p in data saver) for our own
+  // uploads instead of the raw 4K original. Pexels items keep their pre-picked
+  // URL. Falls back gracefully when no quality ladder is present.
+  const videoUrl = pickVideoUrl(item, { dataSaver: prefs?.content?.dataSaver });
 
   const player = useVideoPlayer(videoUrl, (p) => {
     p.loop  = true;
     p.muted = false;
+    // Smaller forward buffer = faster first frame. Player keeps fetching after start.
+    if ('bufferOptions' in p) {
+      try {
+        p.bufferOptions = {
+          preferredForwardBufferDuration: 4,
+          minBufferForPlayback: 1,
+          waitsToMinimizeStalling: false,
+        };
+      } catch {}
+    }
   });
-  const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
+  useEvent(player, 'playingChange', { isPlaying: player.playing });
 
   const [isReady, setIsReady] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -70,19 +116,35 @@ export default function ReelCard({ item, isActive, onOpenComments, bottomOffset 
     return () => { s1.remove(); s2.remove(); };
   }, [player, duration]);
 
-  // Play/pause based on visibility
+  // Play/pause based on viewability AND screen focus.
+  // isFocused becomes false when the user navigates to another tab — that
+  // pauses the video and prevents background playback.
   const [userPaused, setUserPaused] = useState(false);
   useEffect(() => {
-    if (isActive && !userPaused) player.play();
+    if (isActive && isFocused && !userPaused) player.play();
     else player.pause();
-  }, [isActive, userPaused]);
+  }, [isActive, isFocused, userPaused, player]);
 
   // ── Social state ────────────────────────────────────────────────────────
   const [isLiked,     setIsLiked]     = useState(item.isLiked     ?? false);
   const [isSaved,     setIsSaved]     = useState(item.isSaved     ?? false);
+  const [isReposted,  setIsReposted]  = useState(item.isReposted  ?? false);
   const [isFollowing, setIsFollowing] = useState(item.isFollowing ?? false);
-  const [likes,       setLikes]       = useState(item.likesCount  ?? item.likes ?? 0);
-  const [saves,       setSaves]       = useState(item.savesCount  ?? item.saves ?? 0);
+  const [likes,       setLikes]       = useState(item.likesCount   ?? item.likes   ?? 0);
+  const [saves,       setSaves]       = useState(item.savesCount   ?? item.saves   ?? 0);
+  const [shares,      setShares]      = useState(item.sharesCount  ?? item.shares  ?? 0);
+  const [reposts,     setReposts]     = useState(item.repostsCount ?? item.reposts ?? 0);
+  const [showMore,    setShowMore]    = useState(false);
+
+  // Hydrate persisted save state for Pexels videos
+  useEffect(() => {
+    if (!isExternal) return;
+    let alive = true;
+    loadSavedSet().then((set) => {
+      if (alive && set.has(item._id || item.id)) setIsSaved(true);
+    });
+    return () => { alive = false; };
+  }, [isExternal, item._id, item.id]);
 
   // ── Tap handling (single = pause, double = like) ────────────────────────
   const [burst, setBurst]   = useState({ visible: false, x: 0, y: 0 });
@@ -98,7 +160,7 @@ export default function ReelCard({ item, isActive, onOpenComments, bottomOffset 
       if (!isLiked) {
         setIsLiked(true);
         setLikes(l => l + 1);
-        videoService.toggleLike(item._id || item.id);
+        if (!isExternal) videoService.toggleLike(item._id || item.id);
       }
       setBurst({ visible: false, x: locationX, y: locationY });
       setTimeout(() => setBurst({ visible: true, x: locationX, y: locationY }), 10);
@@ -111,44 +173,92 @@ export default function ReelCard({ item, isActive, onOpenComments, bottomOffset 
       });
     }
     lastTap.current = now;
-  }, [isLiked, item._id, item.id]);
+  }, [isLiked, item._id, item.id, isExternal, pauseAnim]);
 
   // ── Action handlers ─────────────────────────────────────────────────────
   const handleLike = () => {
     const next = !isLiked;
     setIsLiked(next);
-    setLikes(l => next ? l + 1 : l - 1);
-    videoService.toggleLike(item._id || item.id);
+    setLikes(l => Math.max(0, next ? l + 1 : l - 1));
+    if (!isExternal) videoService.toggleLike(item._id || item.id);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const next = !isSaved;
     setIsSaved(next);
-    setSaves(s => next ? s + 1 : s - 1);
-    videoService.toggleSave(item._id || item.id);
+    setSaves(s => Math.max(0, next ? s + 1 : s - 1));
+    if (isExternal) {
+      const set = await loadSavedSet();
+      if (next) set.add(item._id || item.id);
+      else      set.delete(item._id || item.id);
+      persistSavedSet(set);
+    } else {
+      videoService.toggleSave(item._id || item.id);
+    }
   };
 
   const handleShare = async () => {
     try {
-      await Share.share({ message: `Check out this video by @${creator} on TrueVision!` });
-      videoService.shareVideo(item._id || item.id);
-    } catch (_) {}
+      const url = item.pexelsUrl || item.videoUrl || '';
+      const message = `Check out @${creator} on TrueVision${url ? `\n${url}` : ''}`;
+      await Share.share({ message });
+      setShares((s) => s + 1);
+      if (!isExternal) videoService.shareVideo(item._id || item.id);
+    } catch {}
+  };
+
+  const handleRepost = async () => {
+    if (isExternal) {
+      Alert.alert('Repost unavailable', "Stock videos from external sources can't be reposted.");
+      return;
+    }
+    const next = !isReposted;
+    // Optimistic update — flip immediately
+    setIsReposted(next);
+    setReposts((c) => Math.max(0, next ? c + 1 : c - 1));
+
+    const res = await videoService.toggleRepost(item._id || item.id);
+    if (!res.success) {
+      // Revert on failure
+      setIsReposted(!next);
+      setReposts((c) => Math.max(0, !next ? c + 1 : c - 1));
+      Alert.alert('Could not update repost', res.message || 'Try again later.');
+      return;
+    }
+    // Honour the server's authoritative state if it disagrees
+    if (typeof res.reposted === 'boolean' && res.reposted !== next) {
+      setIsReposted(res.reposted);
+    }
+    if (typeof res.repostsCount === 'number') setReposts(res.repostsCount);
   };
 
   const handleFollow = () => {
     setIsFollowing(true);
+    // Persistence for follow is part of the (future) follow API — local only for now.
   };
 
   // ── Derived ─────────────────────────────────────────────────────────────
-  const creator = item.userId?.username || item.user?.name || 'creator';
-  const avatar  = item.userId?.profileImage || item.user?.avatar || 'https://i.pravatar.cc/150?img=1';
-  const song    = item.song || `Original Sound – ${creator}`;
-  const caption = item.description || '';
+  const creator      = item.userId?.username || item.user?.name || 'creator';
+  const creatorName  = item.userId?.fullName || item.userId?.username || creator;
+  const avatar       = item.userId?.profileImage || item.user?.avatar || null; // null → initials fallback
+  const song         = item.song || (isExternal ? '' : `Original Sound – ${creator}`);
+  const caption      = item.description || '';
   const commentCount = item.commentsCount ?? item.comments ?? 0;
-  const shareCount   = item.sharesCount   ?? item.shares   ?? 0;
+  const isVerified   = item.userId?.isVerified ?? false;
 
   return (
     <View style={{ width, height, backgroundColor: '#000' }}>
+
+      {/* ── Thumbnail behind the video while it buffers ─────────────────── */}
+      {item.thumbnailUrl ? (
+        <ExpoImage
+          source={{ uri: item.thumbnailUrl }}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          transition={150}
+          cachePolicy="memory-disk"
+        />
+      ) : null}
 
       {/* ── Video ─────────────────────────────────────────────────────── */}
       <TouchableWithoutFeedback onPress={handleTap}>
@@ -198,17 +308,21 @@ export default function ReelCard({ item, isActive, onOpenComments, bottomOffset 
       {/* ── Right action column ───────────────────────────────────────── */}
       <ActionButtons
         avatarUri={avatar}
+        avatarName={creatorName}
         likes={likes}
         comments={commentCount}
-        shares={shareCount}
+        shares={shares}
         saves={saves}
+        reposts={reposts}
         isLiked={isLiked}
         isSaved={isSaved}
+        isReposted={isReposted}
         onLike={handleLike}
         onComment={onOpenComments}
         onShare={handleShare}
         onSave={handleSave}
-        onMore={() => {}}
+        onRepost={handleRepost}
+        onMore={() => setShowMore(true)}
         onAvatarPress={() => {}}
         style={{ bottom: bottomOffset + 100 }}
       />
@@ -219,8 +333,17 @@ export default function ReelCard({ item, isActive, onOpenComments, bottomOffset 
         caption={caption}
         song={song}
         isFollowing={isFollowing}
+        isVerified={isVerified}
         onFollow={handleFollow}
         style={{ bottom: bottomOffset + 14 }}
+      />
+
+      {/* ── Three-dot menu sheet ──────────────────────────────────────── */}
+      <MoreSheet
+        visible={showMore}
+        item={item}
+        onClose={() => setShowMore(false)}
+        onHide={(it, reason) => onHide?.(it, reason)}
       />
     </View>
   );

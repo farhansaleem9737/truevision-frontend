@@ -47,6 +47,15 @@ const videoService = {
     }
   },
 
+  searchHashtags: async (q, limit = 20) => {
+    try {
+      const res = await api.get('/search/hashtags', { params: { q, limit } });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error', hashtags: [] };
+    }
+  },
+
   // ── SINGLE VIDEO ─────────────────────────────────────────────────────────────
   getVideoById: async (id) => {
     try {
@@ -249,6 +258,32 @@ const videoService = {
   deleteVideo: async (id) => {
     try {
       const res = await api.delete(`/${id}`);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error' };
+    }
+  },
+
+  // ── REPOSTS ─────────────────────────────────────────────────────────────────
+  getUserReposts: async (userId, page = 1, limit = 30) => {
+    try {
+      const res = await axios.get(`${API_URL}/users/${userId}/reposts`, {
+        params: { page, limit },
+        headers: { Authorization: `Bearer ${await AsyncStorage.getItem('authToken')}` },
+        timeout: 30000,
+      });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error', videos: [] };
+    }
+  },
+
+  // ── PIN / UNPIN to profile ──────────────────────────────────────────────────
+  // pinned: optional boolean. Omit to flip current state.
+  togglePin: async (id, pinned) => {
+    try {
+      const body = (typeof pinned === 'boolean') ? { pinned } : {};
+      const res  = await api.put(`/${id}/pin`, body);
       return res.data;
     } catch (e) {
       return { success: false, message: e.response?.data?.message || 'Network error' };

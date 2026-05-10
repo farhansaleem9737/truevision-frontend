@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth }     from '../context/AuthContext';
+import { useTheme }    from '../context/ThemeContext';
 import chatService     from '../services/ChatService';
 import socketService   from '../services/SocketService';
 
@@ -44,6 +45,20 @@ const formatDate = (d) => {
 };
 const ini = (n) => n ? n.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '?';
 
+// Human-friendly "last seen" text
+const formatLastSeen = (d) => {
+  if (!d) return '';
+  const diff = Math.max(0, Date.now() - new Date(d).getTime());
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1)     return 'Last seen just now';
+  if (mins < 60)    return `Last seen ${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24)     return `Last seen ${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7)     return `Last seen ${days}d ago`;
+  return `Last seen ${new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+};
+
 // ─── Video Card ──────────────────────────────────────────────────────────────
 const VideoCard = ({ video, onPress, isMine }) => {
   if (!video) return null;
@@ -59,29 +74,77 @@ const VideoCard = ({ video, onPress, isMine }) => {
   );
 };
 
+// Derive a three-state status from either the new `status` field or the legacy `seen` boolean
+const deriveStatus = (msg) => {
+  if (msg.status) return msg.status;            // new field wins
+  if (msg.seen)   return 'seen';                // legacy fallback
+  return 'sent';
+};
+
+const StatusTick = ({ status }) => {
+  if (status === 'seen') {
+    return <Ionicons name="checkmark-done" size={14} color="#38bdf8" style={{ marginLeft: 4 }} />;
+  }
+  if (status === 'delivered') {
+    return <Ionicons name="checkmark-done" size={14} color="rgba(255,255,255,0.55)" style={{ marginLeft: 4 }} />;
+  }
+  return <Ionicons name="checkmark" size={14} color="rgba(255,255,255,0.55)" style={{ marginLeft: 4 }} />;
+};
+
 // ─── Message Bubble ──────────────────────────────────────────────────────────
-const MessageBubble = ({ msg, isMine, showDate, navigation }) => (
+// Bubble palette per theme:
+//   Mine (sent)     — accent color in both modes (blue→a brighter blue in dark)
+//   Theirs (received)— light gray on light, dark surface on dark
+const bubblePalette = (colors, isDark) => ({
+  mineBg:    colors.accent,
+  theirsBg:  isDark ? '#1f1f24' : '#ffffff',
+  mineText:  '#ffffff',
+  theirsText: colors.text,
+  mineTime:  'rgba(255,255,255,0.6)',
+  theirsTime: colors.textDim,
+  dateBadgeBg: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(100,116,139,0.1)',
+  dateBadgeText: colors.textMuted,
+  deletedText: colors.textDim,
+});
+
+const MessageBubble = ({ msg, isMine, showDate, navigation, palette }) => (
   <View>
-    {showDate && <View style={S.dateBadge}><Text style={S.dateText}>{formatDate(msg.createdAt)}</Text></View>}
+    {showDate && (
+      <View style={[S.dateBadge, { backgroundColor: palette.dateBadgeBg }]}>
+        <Text style={[S.dateText, { color: palette.dateBadgeText }]}>{formatDate(msg.createdAt)}</Text>
+      </View>
+    )}
     <View style={[S.bRow, isMine ? S.bRight : S.bLeft]}>
-      <View style={[S.bubble, isMine ? S.bMine : S.bTheirs, (msg.type === 'video' || msg.type === 'image') && S.bMedia]}>
+      <View style={[
+        S.bubble,
+        isMine
+          ? [S.bMineLayout, { backgroundColor: palette.mineBg, shadowColor: palette.mineBg }]
+          : [S.bTheirsLayout, { backgroundColor: palette.theirsBg }],
+        (msg.type === 'video' || msg.type === 'image') && S.bMedia,
+      ]}>
         {msg.deleted ? (
-          <View style={S.delRow}><Ionicons name="ban-outline" size={13} color="#94a3b8" /><Text style={S.delText}>This message was deleted</Text></View>
+          <View style={S.delRow}>
+            <Ionicons name="ban-outline" size={13} color={palette.deletedText} />
+            <Text style={[S.delText, { color: palette.deletedText }]}>This message was deleted</Text>
+          </View>
         ) : (
           <>
             {msg.type === 'video' && msg.videoId && (
               <VideoCard video={msg.videoId} isMine={isMine} onPress={() => navigation.navigate('VideoPlayer', { videoId: msg.videoId._id || msg.videoId })} />
             )}
             {msg.type === 'image' && msg.imageUrl && <Image source={{ uri: msg.imageUrl }} style={S.imgMsg} resizeMode="cover" />}
-            {msg.text ? <Text style={[S.msgText, isMine ? S.txtMine : S.txtOther]}>{msg.text}</Text> : null}
+            {msg.text ? (
+              <Text style={[S.msgText, { color: isMine ? palette.mineText : palette.theirsText }]}>
+                {msg.text}
+              </Text>
+            ) : null}
           </>
         )}
         <View style={S.msgFoot}>
-          <Text style={[S.msgTime, isMine && S.timeMine]}>{formatTime(msg.createdAt)}</Text>
-          {isMine && !msg.deleted && (
-            <Ionicons name={msg.seen ? 'checkmark-done' : 'checkmark'} size={14}
-              color={msg.seen ? '#93c5fd' : 'rgba(255,255,255,0.4)'} style={{ marginLeft: 4 }} />
-          )}
+          <Text style={[S.msgTime, { color: isMine ? palette.mineTime : palette.theirsTime }]}>
+            {formatTime(msg.createdAt)}
+          </Text>
+          {isMine && !msg.deleted && <StatusTick status={deriveStatus(msg)} />}
         </View>
       </View>
     </View>
@@ -181,7 +244,9 @@ function useSmartKeyboard(insetBottom) {
 // ─── Main ────────────────────────────────────────────────────────────────────
 export default function ChatConversationScreen({ route, navigation }) {
   const { chatId, otherUser } = route.params;
-  const { user: me }         = useAuth();
+  const { user: me }          = useAuth();
+  const { colors, isDark }    = useTheme();
+  const palette               = bubblePalette(colors, isDark);
   const insets                = useSafeAreaInsets();
   const kb                    = useSmartKeyboard(insets.bottom);
 
@@ -193,7 +258,8 @@ export default function ChatConversationScreen({ route, navigation }) {
   const [hasMore, setHasMore]         = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [typing, setTyping]           = useState(false);
-  const [isOnline, setIsOnline]       = useState(false);
+  const [isOnline, setIsOnline]       = useState(!!otherUser?.isOnline);
+  const [lastSeen, setLastSeen]       = useState(otherUser?.lastSeen || null);
 
   const flatListRef = useRef(null);
   const typingTimer = useRef(null);
@@ -228,11 +294,37 @@ export default function ChatConversationScreen({ route, navigation }) {
           if (msg.senderId?._id !== me?._id && msg.senderId !== me?._id) socketService.emit('markSeen', { chatId });
         }
       }),
-      socketService.on('messageSeen', ({ chatId: c }) => { if (c === chatId) setMessages(prev => prev.map(m => ({ ...m, seen: true }))); }),
+      socketService.on('messageSeen', ({ chatId: c }) => {
+        if (c !== chatId) return;
+        setMessages(prev => prev.map(m => ({ ...m, status: 'seen', seen: true })));
+      }),
+      socketService.on('messageDelivered', ({ chatId: c, messageId }) => {
+        if (c !== chatId) return;
+        setMessages(prev => prev.map(m =>
+          m._id === messageId && m.status !== 'seen'
+            ? { ...m, status: 'delivered' }
+            : m
+        ));
+      }),
+      socketService.on('messagesDelivered', ({ items }) => {
+        const idsForThisChat = new Set(
+          (items || []).filter(i => i.chatId === chatId).map(i => i.messageId)
+        );
+        if (!idsForThisChat.size) return;
+        setMessages(prev => prev.map(m =>
+          idsForThisChat.has(m._id) && m.status !== 'seen'
+            ? { ...m, status: 'delivered' }
+            : m
+        ));
+      }),
       socketService.on('typing',     ({ chatId: c, userId: u }) => { if (c === chatId && u !== me?._id) setTyping(true); }),
       socketService.on('stopTyping', ({ chatId: c, userId: u }) => { if (c === chatId && u !== me?._id) setTyping(false); }),
       socketService.on('userOnline',  ({ userId: u }) => { if (u === otherUser?._id) setIsOnline(true); }),
-      socketService.on('userOffline', ({ userId: u }) => { if (u === otherUser?._id) setIsOnline(false); }),
+      socketService.on('userOffline', ({ userId: u, lastSeen: ls }) => {
+        if (u !== otherUser?._id) return;
+        setIsOnline(false);
+        if (ls) setLastSeen(ls);
+      }),
     ];
     return () => { socketService.emit('leaveChat', chatId); unsubs.forEach(fn => fn()); };
   }, [chatId, me?._id, otherUser?._id]);
@@ -308,32 +400,40 @@ export default function ChatConversationScreen({ route, navigation }) {
   // ══════════════════════════════════════════════════════════════════════════
   return (
     <View
-      style={[S.root, { paddingTop: insets.top, paddingBottom: kb.bottomPad }]}
+      style={[S.root, { paddingTop: insets.top, paddingBottom: kb.bottomPad, backgroundColor: colors.surface }]}
       onLayout={kb.onRootLayout}
     >
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <View style={S.header}>
+      <View style={[S.header, { backgroundColor: colors.bg, borderBottomColor: colors.divider }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={S.backBtn}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <Ionicons name="chevron-back" size={26} color="#0f172a" />
+          <Ionicons name="chevron-back" size={26} color={colors.text} />
         </TouchableOpacity>
         {otherUser?.profileImage
           ? <Image source={{ uri: otherUser.profileImage }} style={S.hAvatar} />
           : <View style={[S.hAvatar, S.hAvatarFb]}><Text style={S.hIni}>{ini(otherUser?.fullName)}</Text></View>}
         <View style={S.hInfo}>
-          <Text style={S.hName} numberOfLines={1}>{otherUser?.username || 'User'}</Text>
-          {(typing || isOnline) && (
+          <Text style={[S.hName, { color: colors.text }]} numberOfLines={1}>{otherUser?.username || 'User'}</Text>
+          {typing ? (
             <View style={S.hStatusRow}>
-              {!typing && <View style={S.hOnline} />}
-              <Text style={[S.hStatus, typing && S.hTyping]}>{typing ? 'typing...' : 'Online'}</Text>
+              <Text style={[S.hStatus, S.hTyping, { color: colors.accent }]}>typing...</Text>
             </View>
-          )}
+          ) : isOnline ? (
+            <View style={S.hStatusRow}>
+              <View style={S.hOnline} />
+              <Text style={S.hStatus}>Online</Text>
+            </View>
+          ) : lastSeen ? (
+            <View style={S.hStatusRow}>
+              <Text style={[S.hLastSeen, { color: colors.textMuted }]}>{formatLastSeen(lastSeen)}</Text>
+            </View>
+          ) : null}
         </View>
       </View>
 
       {/* ── Messages ────────────────────────────────────────────────────── */}
       {loading ? (
-        <View style={S.center}><ActivityIndicator size="large" color="#3b82f6" /></View>
+        <View style={S.center}><ActivityIndicator size="large" color={colors.accent} /></View>
       ) : (
         <FlatList
           ref={flatListRef}
@@ -344,7 +444,7 @@ export default function ChatConversationScreen({ route, navigation }) {
           renderItem={({ item, index }) => (
             <TouchableOpacity activeOpacity={0.9} onLongPress={() => handleLongPress(item)} delayLongPress={500}>
               <MessageBubble msg={item} isMine={(item.senderId?._id || item.senderId) === me?._id}
-                showDate={shouldShowDate(item, index)} navigation={navigation} />
+                showDate={shouldShowDate(item, index)} navigation={navigation} palette={palette} />
             </TouchableOpacity>
           )}
           contentContainerStyle={S.listPad}
@@ -355,12 +455,16 @@ export default function ChatConversationScreen({ route, navigation }) {
           onScrollBeginDrag={kb.dismissKeyboard}
           onEndReached={() => { if (hasMore && !loadingMore) loadMessages(page + 1, true); }}
           onEndReachedThreshold={0.4}
-          ListFooterComponent={loadingMore ? <ActivityIndicator style={{ padding: 14 }} color="#94a3b8" /> : null}
+          ListFooterComponent={loadingMore ? <ActivityIndicator style={{ padding: 14 }} color={colors.textMuted} /> : null}
           ListEmptyComponent={
             <View style={S.emptyWrap}>
-              <View style={S.emptyCircle}><Ionicons name="chatbubbles-outline" size={44} color="#93c5fd" /></View>
-              <Text style={S.emptyTitle}>No messages yet</Text>
-              <Text style={S.emptySub}>Say hello to {otherUser?.username || 'this user'}!</Text>
+              <View style={[S.emptyCircle, { backgroundColor: isDark ? 'rgba(96,165,250,0.15)' : '#eff6ff' }]}>
+                <Ionicons name="chatbubbles-outline" size={44} color={colors.accent} />
+              </View>
+              <Text style={[S.emptyTitle, { color: colors.text }]}>No messages yet</Text>
+              <Text style={[S.emptySub, { color: colors.textMuted }]}>
+                Say hello to {otherUser?.username || 'this user'}!
+              </Text>
             </View>
           }
         />
@@ -369,23 +473,23 @@ export default function ChatConversationScreen({ route, navigation }) {
       {/* ── Typing indicator ────────────────────────────────────────────── */}
       {typing && (
         <View style={S.typingBar}>
-          <View style={S.dots}><View style={S.dot} /><View style={[S.dot, { opacity: 0.6 }]} /><View style={S.dot} /></View>
-          <Text style={S.typingLabel}>{otherUser?.username} is typing</Text>
+          <View style={S.dots}><View style={[S.dot, { backgroundColor: colors.textMuted }]} /><View style={[S.dot, { opacity: 0.6, backgroundColor: colors.textMuted }]} /><View style={[S.dot, { backgroundColor: colors.textMuted }]} /></View>
+          <Text style={[S.typingLabel, { color: colors.textMuted }]}>{otherUser?.username} is typing</Text>
         </View>
       )}
 
       {/* ── Composer ────────────────────────────────────────────────────── */}
-      <View style={S.composer}>
+      <View style={[S.composer, { backgroundColor: colors.bg, borderTopColor: colors.divider }]}>
         <TouchableOpacity onPress={showAttachMenu} style={S.attachBtn}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <Ionicons name="add-circle" size={32} color="#3b82f6" />
+          <Ionicons name="add-circle" size={32} color={colors.accent} />
         </TouchableOpacity>
 
-        <View style={S.inputWrap}>
+        <View style={[S.inputWrap, { backgroundColor: colors.iconChipBg, borderColor: colors.divider }]}>
           <TextInput
-            style={S.textInput}
+            style={[S.textInput, { color: colors.text }]}
             placeholder="Message..."
-            placeholderTextColor="#94a3b8"
+            placeholderTextColor={colors.textDim}
             value={text}
             onChangeText={handleTextChange}
             onFocus={kb.onInputFocus}
@@ -397,11 +501,11 @@ export default function ChatConversationScreen({ route, navigation }) {
         </View>
 
         <TouchableOpacity onPress={sendTextMessage} disabled={!text.trim() || sending}
-          style={[S.sendBtn, text.trim() && S.sendOn]}
+          style={[S.sendBtn, { backgroundColor: text.trim() ? colors.accent : colors.divider }]}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           {sending
             ? <ActivityIndicator size={16} color="#fff" />
-            : <Ionicons name="send" size={18} color={text.trim() ? '#fff' : '#94a3b8'} />}
+            : <Ionicons name="send" size={18} color={text.trim() ? '#fff' : colors.textDim} />}
         </TouchableOpacity>
       </View>
     </View>
@@ -410,14 +514,13 @@ export default function ChatConversationScreen({ route, navigation }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
-  root:   { flex: 1, backgroundColor: '#f0f4f8' },
+  root:   { flex: 1 },                         // backgroundColor injected from theme
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 10, paddingVertical: 10,
-    backgroundColor: '#fff',
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#dde3ea',
+    borderBottomWidth: StyleSheet.hairlineWidth,  // backgroundColor + borderBottomColor injected from theme
     elevation: 3, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
   },
   backBtn:    { paddingRight: 6 },
@@ -429,6 +532,7 @@ const S = StyleSheet.create({
   hStatusRow: { flexDirection: 'row', alignItems: 'center', marginTop: 1 },
   hOnline:    { width: 7, height: 7, borderRadius: 4, backgroundColor: '#22c55e', marginRight: 5 },
   hStatus:    { fontSize: 12, color: '#22c55e', fontWeight: '500' },
+  hLastSeen:  { fontSize: 12, color: '#94a3b8', fontWeight: '500' },
   hTyping:    { color: '#3b82f6', fontStyle: 'italic' },
 
   list:    { flex: 1 },
@@ -441,8 +545,9 @@ const S = StyleSheet.create({
   bLeft:    { alignItems: 'flex-start' },
   bRight:   { alignItems: 'flex-end' },
   bubble:   { maxWidth: '80%', borderRadius: 20, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 },
-  bMine:    { backgroundColor: '#3b82f6', borderBottomRightRadius: 6, elevation: 1, shadowColor: '#3b82f6', shadowOpacity: 0.2, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
-  bTheirs:  { backgroundColor: '#fff', borderBottomLeftRadius: 6, elevation: 1, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
+  // Layout-only bubble styles. Colours come from `bubblePalette(theme)` at runtime.
+  bMineLayout:   { borderBottomRightRadius: 6, elevation: 1, shadowOpacity: 0.2, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
+  bTheirsLayout: { borderBottomLeftRadius: 6,  elevation: 1, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
   bMedia:   { paddingHorizontal: 5, paddingTop: 5 },
   msgText:  { fontSize: 15, lineHeight: 22 },
   txtMine:  { color: '#fff' },
@@ -476,22 +581,21 @@ const S = StyleSheet.create({
   composer: {
     flexDirection: 'row', alignItems: 'flex-end',
     paddingHorizontal: 10, paddingTop: 8, paddingBottom: 10,
-    backgroundColor: '#fff',
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#dde3ea',
+    borderTopWidth: StyleSheet.hairlineWidth,  // bg + borderTopColor injected from theme
   },
   attachBtn: { justifyContent: 'center', paddingBottom: 4, marginRight: 2 },
   inputWrap: {
-    flex: 1, backgroundColor: '#f1f5f9', borderRadius: 24,
-    marginHorizontal: 6, borderWidth: 1, borderColor: '#e2e8f0',
+    flex: 1, borderRadius: 24,
+    marginHorizontal: 6, borderWidth: 1,        // bg + borderColor injected from theme
   },
   textInput: {
     paddingHorizontal: 18, paddingTop: 10, paddingBottom: 10,
-    fontSize: 15, color: '#0f172a', maxHeight: 120, minHeight: 44,
+    fontSize: 15, maxHeight: 120, minHeight: 44, // color injected from theme
   },
   sendBtn: {
     width: 42, height: 42, borderRadius: 21,
     alignItems: 'center', justifyContent: 'center',
-    marginBottom: 2, backgroundColor: '#e2e8f0',
+    marginBottom: 2,                            // bg injected from theme based on text empty/non-empty
   },
   sendOn: {
     backgroundColor: '#3b82f6', elevation: 3,

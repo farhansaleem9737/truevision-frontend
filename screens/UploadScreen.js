@@ -1,14 +1,38 @@
 // truevision/screens/UploadScreen.js
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StatusBar, ScrollView,
-  TextInput, Alert, ActivityIndicator,
+  TextInput, Alert, ActivityIndicator, Animated, StyleSheet,
 } from 'react-native';
 import { LinearGradient }  from 'expo-linear-gradient';
 import { Ionicons }        from '@expo/vector-icons';
 import * as ImagePicker    from 'expo-image-picker';
 import ScreenContainer     from '../components/ScreenContainer';
 import videoService        from '../services/VideoService';
+
+// ─── Pressable card with subtle scale-on-press feedback ─────────────────────
+const PressableCard = ({ onPress, disabled, style, children }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+  const handleIn = () => {
+    Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, friction: 8, tension: 220 }).start();
+  };
+  const handleOut = () => {
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 200 }).start();
+  };
+  return (
+    <TouchableOpacity
+      activeOpacity={0.95}
+      onPress={onPress}
+      onPressIn={handleIn}
+      onPressOut={handleOut}
+      disabled={disabled}
+    >
+      <Animated.View style={[style, { transform: [{ scale }] }]}>
+        {children}
+      </Animated.View>
+    </TouchableOpacity>
+  );
+};
 
 // ── Categories matching the backend enum ─────────────────────────────────────
 const CATEGORIES = [
@@ -126,51 +150,60 @@ export default function UploadScreen({ navigation }) {
       <StatusBar barStyle="dark-content" backgroundColor="#f9fafb" />
 
       <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        {/* Header */}
-        <View style={{ backgroundColor: 'white', paddingHorizontal: 24, paddingTop: 20, paddingBottom: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <LinearGradient colors={['#3b82f6', '#8b5cf6']} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
-              <Ionicons name="cloud-upload" size={24} color="white" />
-            </LinearGradient>
-            <View>
-              <Text style={{ fontSize: 26, fontWeight: '900', color: '#0f172a' }}>Upload</Text>
-              <Text style={{ fontSize: 13, color: '#64748b' }}>Share your authentic content</Text>
-            </View>
-          </View>
-
-          {/* Constraints note */}
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#eff6ff', borderRadius: 12, padding: 12, marginTop: 14 }}>
-            <Ionicons name="information-circle" size={18} color="#3b82f6" style={{ marginRight: 8, marginTop: 1 }} />
-            <Text style={{ flex: 1, fontSize: 12, color: '#1e40af', lineHeight: 18 }}>
-              Videos are automatically compressed to max 720p. Multiple quality versions (144p – 720p) are generated. Content violating guidelines will be rejected.
-            </Text>
-          </View>
+        {/* ── Header ───────────────────────────────────────────────────── */}
+        <View style={S.header}>
+          <Text style={S.title}>Upload</Text>
+          <Text style={S.subtitle}>Share your knowledge with the world</Text>
         </View>
 
-        <View style={{ paddingHorizontal: 24, paddingTop: 24, paddingBottom: 40 }}>
+        {/* ── Empty state: info card + action cards + hint ──────────────── */}
+        {!videoAsset ? (
+          <View style={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 40 }}>
 
-          {/* Video picker */}
-          {!videoAsset ? (
-            <View style={{ marginBottom: 24 }}>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a', marginBottom: 14 }}>Select Video</Text>
-              <TouchableOpacity onPress={pickVideo} activeOpacity={0.85} style={{ backgroundColor: 'white', borderRadius: 24, padding: 28, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 }}>
-                <LinearGradient colors={['#3b82f6', '#8b5cf6']} style={{ width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 14 }}>
-                  <Ionicons name="folder-open" size={36} color="white" />
-                </LinearGradient>
-                <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', textAlign: 'center', marginBottom: 6 }}>Choose from Gallery</Text>
-                <Text style={{ color: '#64748b', textAlign: 'center', fontSize: 13 }}>Select a video from your device</Text>
-              </TouchableOpacity>
+            {/* Premium priority note — replaces the old compression paragraph */}
+            <LinearGradient
+              colors={['#eff6ff', '#f5f3ff']}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+              style={S.infoCard}
+            >
+              <View style={S.infoIconWrap}>
+                <Ionicons name="trending-up" size={18} color="#3b82f6" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={S.infoTitle}>Informative content gets boosted</Text>
+                <Text style={S.infoBody}>
+                  Educational, technical and professional videos reach more viewers on TrueVision.
+                </Text>
+              </View>
+            </LinearGradient>
 
-              <TouchableOpacity onPress={recordVideo} activeOpacity={0.85} style={{ backgroundColor: 'white', borderRadius: 24, padding: 28, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 }}>
-                <LinearGradient colors={['#ef4444', '#ec4899']} style={{ width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 14 }}>
-                  <Ionicons name="videocam" size={36} color="white" />
-                </LinearGradient>
-                <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', textAlign: 'center', marginBottom: 6 }}>Record Video</Text>
-                <Text style={{ color: '#64748b', textAlign: 'center', fontSize: 13 }}>Record a new video now (max 5 min)</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
+            {/* Action cards */}
+            <PressableCard onPress={pickVideo} style={S.actionCard}>
+              <LinearGradient
+                colors={['#3b82f6', '#8b5cf6']}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                style={S.actionIcon}
+              >
+                <Ionicons name="folder-open" size={30} color="#fff" />
+              </LinearGradient>
+              <Text style={S.actionTitle}>Choose from Gallery</Text>
+              <Text style={S.actionSubtitle}>Pick a video from your device</Text>
+            </PressableCard>
+
+            <PressableCard onPress={recordVideo} style={S.actionCard}>
+              <LinearGradient
+                colors={['#ef4444', '#ec4899']}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                style={S.actionIcon}
+              >
+                <Ionicons name="videocam" size={30} color="#fff" />
+              </LinearGradient>
+              <Text style={S.actionTitle}>Record Video</Text>
+              <Text style={S.actionSubtitle}>Capture a new clip (up to 5 min)</Text>
+            </PressableCard>
+          </View>
+        ) : (
+            <View style={{ paddingHorizontal: 24, paddingTop: 24, paddingBottom: 40 }}>
               {/* Preview */}
               <View style={{ marginBottom: 20 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -375,10 +408,67 @@ export default function UploadScreen({ navigation }) {
                   </LinearGradient>
                 </TouchableOpacity>
               )}
-            </>
+            </View>
           )}
-        </View>
       </ScrollView>
+
+      {/* Stylesheet for the redesigned empty state */}
     </ScreenContainer>
   );
 }
+
+const S = StyleSheet.create({
+  // Header
+  header: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#eef2f7',
+  },
+  title:    { fontSize: 28, fontWeight: '900', color: '#0f172a', letterSpacing: -0.4 },
+  subtitle: { fontSize: 14, color: '#64748b', marginTop: 4 },
+
+  // Premium info card
+  infoCard: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    paddingVertical: 14, paddingHorizontal: 14,
+    borderRadius: 16, marginTop: 16, marginBottom: 20,
+    borderWidth: 1, borderColor: 'rgba(59,130,246,0.15)',
+  },
+  infoIconWrap: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: 12,
+  },
+  infoTitle: { fontSize: 14, fontWeight: '800', color: '#1e293b', marginBottom: 2 },
+  infoBody:  { fontSize: 12.5, color: '#475569', lineHeight: 18 },
+
+  // Action cards
+  actionCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    paddingVertical: 24, paddingHorizontal: 20,
+    marginBottom: 12,
+    alignItems: 'center',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#eef2f7',
+  },
+  actionIcon: {
+    width: 64, height: 64, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 14,
+    shadowColor: '#3b82f6',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  actionTitle:    { fontSize: 17, fontWeight: '800', color: '#0f172a', marginBottom: 4, letterSpacing: -0.2 },
+  actionSubtitle: { fontSize: 13, color: '#64748b' },
+});
