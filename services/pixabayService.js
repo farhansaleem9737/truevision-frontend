@@ -202,7 +202,7 @@ const pickRandomQuery = () =>
   QUERY_POOL[Math.floor(Math.random() * QUERY_POOL.length)];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public API — same shape as the old pexelsService consumers expect.
+// Public API
 // ─────────────────────────────────────────────────────────────────────────────
 export const pixabayService = {
   /**
@@ -256,10 +256,6 @@ export const pixabayService = {
     if (!rawQuery?.trim()) return { success: true, items: [], page: 1, hasMore: false };
     return pixabayService.getInformativeFeed(page, { query: `${rawQuery.trim()} tutorial` });
   },
-
-  // Legacy alias so HomeScreen's existing `pexelsService.getPopular(page)` call
-  // can be drop-in replaced.
-  getPopular: (page = 1) => pixabayService.getInformativeFeed(page),
 
   // Exposed for tests/debugging
   _isInformative: isInformative,

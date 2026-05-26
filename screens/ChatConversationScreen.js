@@ -1,25 +1,31 @@
 // truevision/screens/ChatConversationScreen.js
 //
-// FINAL KEYBOARD SOLUTION — what actually caused every previous failure:
+// Keyboard handling — the working setup:
 //
-//   Android back button dismisses keyboard but does NOT trigger onBlur.
-//   TextInput retains focus (cursor stays visible) while keyboard is hidden.
-//   If we use `focused` state to decide padding → padding stays forever → huge gap.
+//   • Android: relies on `softwareKeyboardLayoutMode: "resize"` in app.json
+//     (Expo's equivalent of AndroidManifest `windowSoftInputMode="adjustResize"`).
+//     The window resizes when the keyboard opens, so the composer at the
+//     bottom of the flex column stays above the keyboard automatically.
+//     KeyboardAvoidingView is intentionally a no-op on Android here —
+//     using `behavior="height"` on top of adjustResize causes a double
+//     offset and a huge empty gap above the input.
 //
-//   This solution uses a single `kbPadding` state driven by THREE independent signals:
-//     1. Keyboard.addListener → sets exact height, clears on hide
-//     2. onFocus + 500ms delay → fallback estimate if events didn't fire
-//     3. onBlur / BackHandler / scroll-dismiss → clears padding immediately
+//   • iOS: KeyboardAvoidingView with behavior="padding" pushes the
+//     composer above the keyboard. keyboardVerticalOffset is 0 because
+//     the SafeAreaView already accounts for the status-bar inset above
+//     the KAV.
 //
-//   onLayout detects whether adjustResize already handled it → prevents double offset.
+//   • FlatList is `inverted`, so the newest message renders at the visual
+//     bottom — when the layout shrinks/extends, the latest message stays
+//     pinned just above the composer with no manual scroll needed.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, Image, TextInput,
-  StyleSheet, Platform, ActivityIndicator, Alert, Dimensions,
-  Keyboard, LayoutAnimation, UIManager, BackHandler,
+  StyleSheet, Platform, ActivityIndicator, Alert,
+  Keyboard, KeyboardAvoidingView, useWindowDimensions,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth }     from '../context/AuthContext';
@@ -27,11 +33,100 @@ import { useTheme }    from '../context/ThemeContext';
 import chatService     from '../services/ChatService';
 import socketService   from '../services/SocketService';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// useAndroidKeyboardPadding
+//
+// Samsung S21 Ultra (One UI on Android 14) + RN 0.81 + new architecture is a
+// known-bad combination: `Keyboard.addListener` sometimes reports a keyboard
+// height that excludes the suggestion bar, and `softwareKeyboardLayoutMode:
+// "resize"` only partially shrinks the window. Either signal alone is wrong;
+// together they still leave the composer behind the keyboard.
+//
+// This hook reads three independent signals and uses the *largest*:
+//   1. `Keyboard.addListener` events                   (kbEventH)
+//   2. `useWindowDimensions()` height shrink            (winShrink)
+//   3. TextInput focus + 350 ms fallback estimate       (focusEstimate)
+//
+// Then it subtracts whatever the host View was actually shrunk by (so we
+// don't double-offset on Pixel devices where adjustResize works correctly):
+//
+//     bottomPad = max(0, max(eventH, winShrink, focusEstimate) − hostShrink)
+//
+// iOS uses KeyboardAvoidingView, so the hook returns 0 there.
+// ─────────────────────────────────────────────────────────────────────────────
+function useAndroidKeyboardPadding(safeBottom) {
+  const [kbEventH, setKbEventH] = useState(0);
+  const [hostHeight, setHostHeight] = useState(0);
+  const [focused, setFocused] = useState(false);
+  const [focusFallback, setFocusFallback] = useState(0);
 
-const SCREEN_HEIGHT = Dimensions.get('screen').height;
+  const winH = useWindowDimensions().height;
+  const initialWinH = useRef(0);
+  if (winH > initialWinH.current) initialWinH.current = winH;
+
+  const initialHostH = useRef(0);
+  const focusTimer = useRef(null);
+
+  // Signal 1: explicit keyboard events
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const apply = (e) => setKbEventH(e?.endCoordinates?.height || 0);
+    const subs = [
+      Keyboard.addListener('keyboardDidShow', apply),
+      Keyboard.addListener('keyboardDidChangeFrame', apply),
+      Keyboard.addListener('keyboardDidHide', () => setKbEventH(0)),
+    ];
+    return () => subs.forEach((s) => s.remove());
+  }, []);
+
+  // Signal 3: focus-based fallback. If after 350 ms of TextInput focus we
+  // still have no keyboard height (Samsung edge case where events don't
+  // fire), assume ~45 % of screen height — close enough to push the composer
+  // above the keyboard. Cleared on blur or as soon as a real signal arrives.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    clearTimeout(focusTimer.current);
+    if (focused) {
+      focusTimer.current = setTimeout(() => {
+        setFocusFallback(Math.round(winH * 0.45));
+      }, 350);
+    } else {
+      setFocusFallback(0);
+    }
+    return () => clearTimeout(focusTimer.current);
+  }, [focused, winH]);
+
+  // Real signals override the focus estimate as soon as they arrive
+  useEffect(() => {
+    if (kbEventH > 0 && focusFallback > 0) setFocusFallback(0);
+  }, [kbEventH, focusFallback]);
+
+  const onHostLayout = useCallback((e) => {
+    const h = e.nativeEvent.layout.height;
+    if (h > initialHostH.current) initialHostH.current = h;
+    setHostHeight(h);
+  }, []);
+
+  const onInputFocus = useCallback(() => setFocused(true), []);
+  const onInputBlur  = useCallback(() => setFocused(false), []);
+
+  let bottomPad;
+  if (Platform.OS !== 'android') {
+    bottomPad = 0;
+  } else {
+    const winShrink  = Math.max(0, initialWinH.current  - winH);
+    const hostShrink = Math.max(0, initialHostH.current - hostHeight);
+    const kbHeight   = Math.max(kbEventH, winShrink, focusFallback);
+
+    if (kbHeight === 0) {
+      bottomPad = safeBottom;
+    } else {
+      bottomPad = Math.max(0, kbHeight - hostShrink);
+    }
+  }
+
+  return { bottomPad, onHostLayout, onInputFocus, onInputBlur };
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const formatTime = (d) => d ? new Date(d).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
@@ -151,96 +246,6 @@ const MessageBubble = ({ msg, isMine, showDate, navigation, palette }) => (
   </View>
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// useSmartKeyboard — three independent keyboard detection signals
-// ─────────────────────────────────────────────────────────────────────────────
-function useSmartKeyboard(insetBottom) {
-  const [kbPadding, setKbPadding] = useState(0);
-  const [rootH, setRootH]         = useState(0);
-  const initialH                   = useRef(0);
-  const kbFromEvents               = useRef(0);   // height from Keyboard API (0 = not set)
-  const focusTimer                 = useRef(null);
-
-  // ── Signal 1: Keyboard.addListener (exact height when it works) ────────
-  useEffect(() => {
-    const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEv = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-
-    const s1 = Keyboard.addListener(showEv, (e) => {
-      clearTimeout(focusTimer.current);
-      kbFromEvents.current = e.endCoordinates.height;
-      setKbPadding(e.endCoordinates.height);
-    });
-    const s2 = Keyboard.addListener(hideEv, () => {
-      clearTimeout(focusTimer.current);
-      kbFromEvents.current = 0;
-      setKbPadding(0);
-    });
-    return () => { s1.remove(); s2.remove(); };
-  }, []);
-
-  // ── Signal 3: BackHandler — clear padding when Android back is pressed ──
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (kbPadding > 0) {
-        clearTimeout(focusTimer.current);
-        kbFromEvents.current = 0;
-        setKbPadding(0);
-        Keyboard.dismiss();
-        return true; // consume the event, don't navigate back
-      }
-      return false; // let navigation handle it
-    });
-    return () => sub.remove();
-  }, [kbPadding]);
-
-  // ── onLayout — detect adjustResize ─────────────────────────────────────
-  const onRootLayout = useCallback((e) => {
-    const h = e.nativeEvent.layout.height;
-    if (initialH.current === 0) initialH.current = h;
-    setRootH(h);
-  }, []);
-
-  const systemResized = initialH.current > 0 && (initialH.current - rootH) > 50;
-
-  // ── Signal 2: onFocus with delay (fallback for edge-to-edge Expo Go) ───
-  const onInputFocus = useCallback(() => {
-    clearTimeout(focusTimer.current);
-    focusTimer.current = setTimeout(() => {
-      // Only apply fallback if NOTHING ELSE handled the keyboard
-      if (kbFromEvents.current === 0 && !systemResized) {
-        setKbPadding(Math.round(SCREEN_HEIGHT * 0.42));
-      }
-    }, 500);
-  }, [systemResized]);
-
-  const onInputBlur = useCallback(() => {
-    clearTimeout(focusTimer.current);
-    // Only clear if WE set it via fallback (not if events set it — events will clear via keyboardDidHide)
-    if (kbFromEvents.current === 0) {
-      setKbPadding(0);
-    }
-  }, []);
-
-  // Force clear — called when user scrolls the message list
-  const dismissKeyboard = useCallback(() => {
-    clearTimeout(focusTimer.current);
-    Keyboard.dismiss();
-    if (kbFromEvents.current === 0) {
-      setKbPadding(0);
-    }
-  }, []);
-
-  // ── Final padding ──────────────────────────────────────────────────────
-  // systemResized → adjustResize already moved input → add 0
-  // kbPadding > 0 → keyboard is open (from events or fallback) → use that value
-  // else → keyboard closed → use safe area bottom inset
-  const bottomPad = systemResized ? 0 : (kbPadding > 0 ? kbPadding : insetBottom);
-
-  return { bottomPad, onRootLayout, onInputFocus, onInputBlur, dismissKeyboard };
-}
-
 // ─── Main ────────────────────────────────────────────────────────────────────
 export default function ChatConversationScreen({ route, navigation }) {
   const { chatId, otherUser } = route.params;
@@ -248,7 +253,7 @@ export default function ChatConversationScreen({ route, navigation }) {
   const { colors, isDark }    = useTheme();
   const palette               = bubblePalette(colors, isDark);
   const insets                = useSafeAreaInsets();
-  const kb                    = useSmartKeyboard(insets.bottom);
+  const kb                    = useAndroidKeyboardPadding(insets.bottom);
 
   const [messages, setMessages]       = useState([]);
   const [text, setText]               = useState('');
@@ -289,7 +294,6 @@ export default function ChatConversationScreen({ route, navigation }) {
     const unsubs = [
       socketService.on('newMessage', (msg) => {
         if (msg.chatId === chatId) {
-          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
           setMessages(prev => prev.some(m => m._id === msg._id) ? prev : [msg, ...prev]);
           if (msg.senderId?._id !== me?._id && msg.senderId !== me?._id) socketService.emit('markSeen', { chatId });
         }
@@ -373,7 +377,7 @@ export default function ChatConversationScreen({ route, navigation }) {
   };
 
   const showAttachMenu = () => {
-    kb.dismissKeyboard();
+    Keyboard.dismiss();
     Alert.alert('Share', 'What would you like to share?', [
       { text: 'Video from TrueVision', onPress: () => navigation.navigate('ShareVideo', { chatId, onSelectVideo: sendVideoMessage }) },
       { text: 'Photo from Gallery', onPress: pickAndSendImage },
@@ -398,11 +402,24 @@ export default function ChatConversationScreen({ route, navigation }) {
   };
 
   // ══════════════════════════════════════════════════════════════════════════
+  // iOS: KeyboardAvoidingView with behavior="padding" pushes the composer up.
+  // Android: KAV is a no-op (behavior=undefined). Instead, useAndroidKeyboardPadding
+  // applies bottom padding via the `host` View — needed because Samsung One UI
+  // on RN 0.81 + new arch ignores softwareKeyboardLayoutMode="resize".
   return (
-    <View
-      style={[S.root, { paddingTop: insets.top, paddingBottom: kb.bottomPad, backgroundColor: colors.surface }]}
-      onLayout={kb.onRootLayout}
+    <SafeAreaView
+      style={[S.root, { backgroundColor: colors.surface }]}
+      edges={Platform.OS === 'ios' ? ['top', 'bottom'] : ['top']}
     >
+      <KeyboardAvoidingView
+        style={S.root}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={0}
+      >
+      <View
+        style={[S.root, { paddingBottom: kb.bottomPad }]}
+        onLayout={kb.onHostLayout}
+      >
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <View style={[S.header, { backgroundColor: colors.bg, borderBottomColor: colors.divider }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={S.backBtn}
@@ -451,8 +468,6 @@ export default function ChatConversationScreen({ route, navigation }) {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
-          onScrollBeginDrag={kb.dismissKeyboard}
           onEndReached={() => { if (hasMore && !loadingMore) loadMessages(page + 1, true); }}
           onEndReachedThreshold={0.4}
           ListFooterComponent={loadingMore ? <ActivityIndicator style={{ padding: 14 }} color={colors.textMuted} /> : null}
@@ -508,7 +523,9 @@ export default function ChatConversationScreen({ route, navigation }) {
             : <Ionicons name="send" size={18} color={text.trim() ? '#fff' : colors.textDim} />}
         </TouchableOpacity>
       </View>
-    </View>
+      </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

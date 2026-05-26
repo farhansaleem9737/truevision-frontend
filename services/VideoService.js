@@ -230,6 +230,16 @@ const videoService = {
         return saveRes.data;
       } catch (e) {
         console.error('[Upload Step 4 Error]', e.message, e.response?.data);
+        // 422 = backend rejected the upload (content filter, NSFW moderation).
+        // Pass the server's message through verbatim — it's already user-friendly
+        // and includes any moderation details (status + confidence).
+        if (e.response?.status === 422 && e.response?.data?.message) {
+          return {
+            success: false,
+            moderation: e.response.data.moderation,
+            message:    e.response.data.message,
+          };
+        }
         return {
           success: false,
           message: `[Save] Video uploaded to cloud but could not save to database: ${e.response?.data?.message || e.message || 'Server error'}. Contact support with ID: ${cl.public_id}`,

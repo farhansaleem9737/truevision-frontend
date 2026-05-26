@@ -1,6 +1,6 @@
 // components/reel/ReelCard.js  —  Single full-screen reel with video + interactions
 //
-// Renders both your uploaded videos and external sources (Pixabay / Pexels).
+// Renders both your uploaded videos and external sources (Pixabay).
 // For any external item (item.source !== 'truevision'):
 //   • likes / saves / shares update local state only — no backend call (the video isn't in our DB)
 //   • saves persist to AsyncStorage so they survive reloads
@@ -25,17 +25,18 @@ import videoService          from '../../services/VideoService';
 import { pickVideoUrl }      from '../../utils/videoQuality';
 import usePreferences        from '../../hooks/usePreferences';
 
-const PEXELS_SAVES_KEY = '@truevision:pexels-saves';
+// Local-only save state for external imports (Pixabay etc). Those videos
+// aren't in our DB, so we can't persist saves server-side.
+const EXTERNAL_SAVES_KEY = '@truevision:external-saves';
 
-// Read/write the persisted set of saved Pexels video IDs.
 const loadSavedSet = async () => {
   try {
-    const raw = await AsyncStorage.getItem(PEXELS_SAVES_KEY);
+    const raw = await AsyncStorage.getItem(EXTERNAL_SAVES_KEY);
     return raw ? new Set(JSON.parse(raw)) : new Set();
   } catch { return new Set(); }
 };
 const persistSavedSet = async (set) => {
-  try { await AsyncStorage.setItem(PEXELS_SAVES_KEY, JSON.stringify([...set])); }
+  try { await AsyncStorage.setItem(EXTERNAL_SAVES_KEY, JSON.stringify([...set])); }
   catch {}
 };
 
@@ -70,7 +71,7 @@ const HeartBurst = ({ visible, x, y }) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function ReelCard({ item, isActive, isFocused = true, onOpenComments, onHide, bottomOffset }) {
-  // External = anything that isn't an own upload (Pixabay, Pexels, etc.).
+  // External = anything that isn't an own upload (Pixabay, etc.).
   // External items skip backend mutations: likes/saves/etc. live in local
   // state only because the videos aren't in our database.
   const isExternal = item.source && item.source !== 'truevision';
@@ -78,8 +79,8 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
 
   // ── Video player ────────────────────────────────────────────────────────
   // Prefer a Cloudinary-encoded 720p (or 480p in data saver) for our own
-  // uploads instead of the raw 4K original. Pexels items keep their pre-picked
-  // URL. Falls back gracefully when no quality ladder is present.
+  // uploads instead of the raw 4K original. External items ship a single
+  // pre-picked URL and fall back to that.
   const videoUrl = pickVideoUrl(item, { dataSaver: prefs?.content?.dataSaver });
 
   const player = useVideoPlayer(videoUrl, (p) => {
@@ -136,7 +137,7 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   const [reposts,     setReposts]     = useState(item.repostsCount ?? item.reposts ?? 0);
   const [showMore,    setShowMore]    = useState(false);
 
-  // Hydrate persisted save state for Pexels videos
+  // Hydrate persisted save state for external (non-own-upload) videos
   useEffect(() => {
     if (!isExternal) return;
     let alive = true;
@@ -199,7 +200,7 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
 
   const handleShare = async () => {
     try {
-      const url = item.pexelsUrl || item.videoUrl || '';
+      const url = item.videoUrl || '';
       const message = `Check out @${creator} on TrueVision${url ? `\n${url}` : ''}`;
       await Share.share({ message });
       setShares((s) => s + 1);

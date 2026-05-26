@@ -126,9 +126,13 @@ export default function UploadScreen({ navigation }) {
     setProgress(0);
 
     if (res.success) {
+      const m = res.moderation;
+      const modLine = m
+        ? `\n\nModeration: ${m.status} (${Math.round((m.confidence || 0) * 100)}% confidence${m.fallback ? ', fallback' : ''})`
+        : '';
       Alert.alert(
         'Uploaded!',
-        'Your video has been uploaded and will appear in the feed shortly.',
+        `Your video has been uploaded and will appear in the feed shortly.${modLine}`,
         [{
           text: 'Great!',
           onPress: () => {
@@ -140,7 +144,8 @@ export default function UploadScreen({ navigation }) {
         }],
       );
     } else {
-      // Show the full message — it contains the step prefix so the user knows exactly what failed
+      // Show the full message — it contains the step prefix so the user knows exactly what failed.
+      // Moderation block (status/confidence) is already embedded in res.message by the backend.
       Alert.alert('Upload Failed', res.message || 'Something went wrong. Please try again.');
     }
   };

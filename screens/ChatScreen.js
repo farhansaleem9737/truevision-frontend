@@ -123,6 +123,11 @@ export default function ChatScreen() {
   const [searching, setSearching]   = useState(false);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
 
+  // Suggested users — shown in the empty state so a brand-new user can
+  // tap someone and start a conversation without typing in the search box.
+  // Backend returns up to 30 recently-active users when `q` is empty.
+  const [suggested, setSuggested] = useState([]);
+
   const searchTimer = useRef(null);
 
   // ── Load chats on focus ──────────────────────────────────────────────────
@@ -142,10 +147,20 @@ export default function ChatScreen() {
     setLoading(false);
   }, []);
 
+  // ── Load suggested users (people-you-can-chat-with) ─────────────────────
+  // Fires on focus so the list stays fresh as new users register.
+  const loadSuggested = useCallback(async () => {
+    const res = await chatService.searchUsers('');
+    if (res?.success && Array.isArray(res.users)) {
+      setSuggested(res.users);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       loadChats();
-    }, [loadChats]),
+      loadSuggested();
+    }, [loadChats, loadSuggested]),
   );
 
   // ── Socket listeners ─────────────────────────────────────────────────────
@@ -287,6 +302,36 @@ export default function ChatScreen() {
         )
       ) : loading ? (
         <ActivityIndicator style={{ marginTop: 60 }} size="large" color={colors.accent} />
+      ) : chats.length === 0 ? (
+        /* No chats yet — show suggested users so the user can tap one and start.
+           SearchRow is the same component used by the search results list, so
+           the row visuals stay consistent. */
+        <FlatList
+          data={suggested}
+          keyExtractor={(item) => item._id}
+          renderItem={({ item }) => (
+            <SearchRow user={item} colors={colors} onPress={() => openChatWithUser(item)} />
+          )}
+          contentContainerStyle={{ paddingBottom: 120 }}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            <View style={S.empty}>
+              <Ionicons name="chatbubbles-outline" size={56} color={colors.textDim} />
+              <Text style={[S.emptyTitle, { color: colors.text }]}>No messages yet</Text>
+              <Text style={[S.emptyText, { color: colors.textMuted }]}>
+                Tap anyone below to start a conversation
+              </Text>
+            </View>
+          }
+          ListEmptyComponent={
+            <View style={S.empty}>
+              <Ionicons name="person-outline" size={48} color={colors.textDim} />
+              <Text style={[S.emptyText, { color: colors.textMuted, marginTop: 14 }]}>
+                No other users are signed up yet.
+              </Text>
+            </View>
+          }
+        />
       ) : (
         /* Chat list */
         <FlatList
@@ -303,13 +348,6 @@ export default function ChatScreen() {
           contentContainerStyle={{ paddingBottom: 120 }}
           showsVerticalScrollIndicator={false}
           ItemSeparatorComponent={() => <View style={[S.separator, { backgroundColor: colors.divider }]} />}
-          ListEmptyComponent={
-            <View style={S.empty}>
-              <Ionicons name="chatbubbles-outline" size={64} color={colors.textDim} />
-              <Text style={[S.emptyTitle, { color: colors.text }]}>No messages yet</Text>
-              <Text style={[S.emptyText, { color: colors.textMuted }]}>Search for a user to start chatting</Text>
-            </View>
-          }
         />
       )}
     </View>

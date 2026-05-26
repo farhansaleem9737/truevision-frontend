@@ -28,6 +28,7 @@ import userService            from '../services/UserService';
 import videoService           from '../services/VideoService';
 import { API_URL }            from '../services/config';
 import MoreOptionsSheet       from '../components/profile/MoreOptionsSheet';
+import VideoActionsSheet      from '../components/profile/VideoActionsSheet';
 
 const { width } = Dimensions.get('window');
 const GRID_GAP  = 2;
@@ -133,6 +134,7 @@ export default function ProfileScreen({ navigation }) {
   const [errorInfo, setErrorInfo]   = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showMore, setShowMore]     = useState(false);
+  const [actionsVideo, setActionsVideo] = useState(null); // long-pressed tile
   const [repostsLoaded, setRepostsLoaded] = useState(false);
   const [repostsLoading, setRepostsLoading] = useState(false);
 
@@ -257,52 +259,32 @@ export default function ProfileScreen({ navigation }) {
     }
   };
 
-  // ── Long-press tile → Pin / Delete ──────────────────────────────────────
-  const handleTileLongPress = (video) => {
+  // ── Long-press tile → open modern Pin / Delete sheet ────────────────────
+  const handleTileLongPress = (video) => setActionsVideo(video);
+
+  const handlePinAction = async () => {
+    const video = actionsVideo;
+    if (!video) return;
     const isPinned = !!video.pinned;
-    Alert.alert(
-      video.title || 'Video options', undefined,
-      [
-        {
-          text: isPinned ? 'Unpin from profile' : 'Pin to profile',
-          onPress: async () => {
-            setVideos((prev) => prev.map((v) => v._id === video._id ? { ...v, pinned: !isPinned } : v));
-            const res = await videoService.togglePin(video._id, !isPinned);
-            if (!res.success) {
-              setVideos((prev) => prev.map((v) => v._id === video._id ? { ...v, pinned: isPinned } : v));
-              Alert.alert('Could not update pin', res.message || 'Try again later.');
-            } else {
-              loadRef.current();
-            }
-          },
-        },
-        {
-          text: 'Delete video',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              'Delete video',
-              'This will permanently remove the video. This cannot be undone.',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Delete', style: 'destructive',
-                  onPress: async () => {
-                    setVideos((prev) => prev.filter((v) => v._id !== video._id));
-                    const res = await videoService.deleteVideo(video._id);
-                    if (!res.success) {
-                      Alert.alert('Delete failed', res.message || 'Try again later.');
-                      loadRef.current();
-                    }
-                  },
-                },
-              ],
-            );
-          },
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
+    setVideos((prev) => prev.map((v) => v._id === video._id ? { ...v, pinned: !isPinned } : v));
+    const res = await videoService.togglePin(video._id, !isPinned);
+    if (!res.success) {
+      setVideos((prev) => prev.map((v) => v._id === video._id ? { ...v, pinned: isPinned } : v));
+      Alert.alert('Could not update pin', res.message || 'Try again later.');
+    } else {
+      loadRef.current();
+    }
+  };
+
+  const handleDeleteAction = async () => {
+    const video = actionsVideo;
+    if (!video) return;
+    setVideos((prev) => prev.filter((v) => v._id !== video._id));
+    const res = await videoService.deleteVideo(video._id);
+    if (!res.success) {
+      Alert.alert('Delete failed', res.message || 'Try again later.');
+      loadRef.current();
+    }
   };
 
   // ── Stats ───────────────────────────────────────────────────────────────
@@ -452,6 +434,14 @@ export default function ProfileScreen({ navigation }) {
         onSettings={() => navigation.navigate('Settings')}
         onHelp={() => navigation.navigate('HelpSupport')}
         onLogout={async () => { await logout(); }}
+      />
+
+      <VideoActionsSheet
+        visible={!!actionsVideo}
+        isPinned={!!actionsVideo?.pinned}
+        onClose={() => setActionsVideo(null)}
+        onPin={handlePinAction}
+        onDelete={handleDeleteAction}
       />
     </View>
   );

@@ -3,8 +3,8 @@ import React, {
 } from 'react';
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback,
-  StatusBar, Dimensions, FlatList, TextInput,
-  KeyboardAvoidingView, Platform, Animated, Image,
+  StatusBar, Dimensions, FlatList,
+  Platform, Animated, Image,
   ActivityIndicator, Alert, Share, StyleSheet,
 } from 'react-native';
 
@@ -17,6 +17,7 @@ import { useSafeAreaInsets }         from 'react-native-safe-area-context';
 import { useIsFocused }              from '@react-navigation/native';
 import videoService                  from '../services/VideoService';
 import { useAuth }                   from '../context/AuthContext';
+import CommentsSheet                 from '../components/comments/CommentsSheet';
 
 const { width, height } = Dimensions.get('window');
 
@@ -114,15 +115,7 @@ const mapApiVideo = (v) => {
   };
 };
 
-const MOCK_COMMENTS = [
-  { id:'c1', user:'jazz_vibes',   avatar:'https://i.pravatar.cc/150?img=10', text:'Absolutely 🔥🔥 keep going!!',           likes:843,  time:'2h' },
-  { id:'c2', user:'techwave99',   avatar:'https://i.pravatar.cc/150?img=11', text:'Saved for later 🙌',                     likes:321,  time:'4h' },
-  { id:'c3', user:'nora.creates', avatar:'https://i.pravatar.cc/150?img=12', text:'The quality here is INSANE 😭',          likes:1200, time:'6h' },
-  { id:'c4', user:'mikewave',     avatar:'https://i.pravatar.cc/150?img=13', text:"Can't stop watching 🔁",                 likes:98,   time:'8h' },
-  { id:'c5', user:'skyline_art',  avatar:'https://i.pravatar.cc/150?img=14', text:'Legendary content ✨',                   likes:450,  time:'1d' },
-  { id:'c6', user:'pixel_punk',   avatar:'https://i.pravatar.cc/150?img=15', text:'Watching this on repeat 😂',             likes:2100, time:'1d' },
-  { id:'c7', user:'luna.visuals', avatar:'https://i.pravatar.cc/150?img=16', text:'Sent this to everyone I know 📸',        likes:560,  time:'2d' },
-];
+// (Mock comment data removed — comments are now backed by Firestore via CommentsSheet.)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -230,125 +223,8 @@ const SongTicker = ({ song }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMMENT SHEET  — Instagram style (white bg, like the reference screenshot)
+// COMMENT SHEET — backed by Firestore. See components/comments/CommentsSheet.
 // ─────────────────────────────────────────────────────────────────────────────
-const CommentSheet = ({ visible, onClose, commentCount = 0 }) => {
-  const insets  = useSafeAreaInsets();
-  const slideY  = useRef(new Animated.Value(height)).current;
-  const [comments, setComments] = useState(MOCK_COMMENTS);
-  const [text, setText]         = useState('');
-  const [likedMap, setLikedMap] = useState({});
-  const [count, setCount]       = useState(commentCount);
-
-  useEffect(() => setCount(commentCount), [commentCount]);
-  useEffect(() => {
-    Animated.spring(slideY, {
-      toValue: visible ? 0 : height,
-      useNativeDriver:true, friction:26, tension:240,
-    }).start();
-  }, [visible]);
-
-  const post = useCallback(() => {
-    if (!text.trim()) return;
-    setComments(p => [{
-      id:String(Date.now()), user:'you',
-      avatar:'https://i.pravatar.cc/150?img=20',
-      text:text.trim(), likes:0, time:'now',
-    }, ...p]);
-    setCount(n => n + 1);
-    setText('');
-  }, [text]);
-
-  const renderComment = ({ item }) => (
-    <View style={S.commentRow}>
-      <Image source={{ uri:item.avatar }} style={S.commentAvatar} />
-      <View style={{ flex:1 }}>
-        <View style={{ flexDirection:'row', alignItems:'center', marginBottom:2 }}>
-          <Text style={S.commentUser}>{item.user}</Text>
-          <Text style={S.commentTime}>  {item.time}</Text>
-        </View>
-        <Text style={S.commentText}>{item.text}</Text>
-        <TouchableOpacity
-          onPress={() => setLikedMap(m => ({ ...m, [item.id]:!m[item.id] }))}
-          style={{ flexDirection:'row', alignItems:'center', marginTop:5 }}
-        >
-          <Ionicons
-            name={likedMap[item.id] ? 'heart' : 'heart-outline'}
-            size={13}
-            color={likedMap[item.id] ? '#e11d48' : '#94a3b8'}
-          />
-          <Text style={S.commentLikes}>
-            {fmt(item.likes + (likedMap[item.id] ? 1 : 0))}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  // VideoPlayer is rendered above the tab navigator, so there is no tab bar
-  // beneath it. Only safe-area inset is needed.
-  const tabOffset = insets.bottom > 0 ? insets.bottom : Platform.select({ ios: 8, android: 8 });
-
-  return (
-    <>
-      {visible && (
-        <TouchableWithoutFeedback onPress={onClose}>
-          <View style={S.commentBackdrop} />
-        </TouchableWithoutFeedback>
-      )}
-      <Animated.View style={[S.commentSheet, {
-        bottom: tabOffset,
-        transform:[{ translateY:slideY }],
-      }]}>
-        {/* Drag handle */}
-        <View style={{ alignItems:'center', paddingTop:10 }}>
-          <View style={S.commentHandle} />
-        </View>
-        {/* Header */}
-        <View style={S.commentHeader}>
-          <Text style={S.commentTitle}>Comments</Text>
-          <Text style={S.commentCountText}>{fmt(count)}</Text>
-          <TouchableOpacity onPress={onClose} style={{ marginLeft:'auto' }}>
-            <Ionicons name="close" size={22} color="#64748b" />
-          </TouchableOpacity>
-        </View>
-        <View style={S.commentDivider} />
-
-        <FlatList
-          data={comments}
-          keyExtractor={i => i.id}
-          renderItem={renderComment}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom:8 }}
-        />
-
-        {/* Input bar */}
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[S.commentInputRow, { paddingBottom:Math.max(insets.bottom, 10) }]}>
-            <Image source={{ uri:'https://i.pravatar.cc/150?img=20' }} style={S.commentInputAvatar} />
-            <View style={S.commentInputBox}>
-              <TextInput
-                value={text}
-                onChangeText={setText}
-                placeholder="Add a comment…"
-                placeholderTextColor="#94a3b8"
-                style={S.commentInput}
-                returnKeyType="send"
-                onSubmitEditing={post}
-              />
-              {text.trim().length > 0 && (
-                <TouchableOpacity onPress={post}>
-                  <Text style={S.commentPostBtn}>Post</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Animated.View>
-    </>
-  );
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLE VIDEO ITEM
@@ -966,10 +842,13 @@ export default function VideoPlayerScreen({ navigation, route }) {
         }
       />
 
-      <CommentSheet
+      <CommentsSheet
         visible={showComments}
         onClose={() => setShowComments(false)}
-        commentCount={feed[activeIndex]?.comments ?? 0}
+        videoId={feed[activeIndex]?._id || feed[activeIndex]?.id}
+        commentCount={feed[activeIndex]?.commentsCount ?? feed[activeIndex]?.comments ?? 0}
+        isExternal={!!feed[activeIndex]?.source && feed[activeIndex].source !== 'truevision'}
+        tabOffset={insets.bottom > 0 ? insets.bottom : Platform.select({ ios: 8, android: 8 })}
       />
     </View>
   );

@@ -19,10 +19,14 @@ import VideoPlayerScreen        from './screens/VideoPlayerScreen';
 import EditProfileScreen        from './screens/EditProfileScreen';
 import ChatConversationScreen   from './screens/ChatConversationScreen';
 import ShareVideoScreen         from './screens/ShareVideoScreen';
-import PexelsReelsScreen        from './screens/PexelsReelsScreen';
 import SettingsScreen           from './screens/SettingsScreen';
 import HelpSupportScreen        from './screens/HelpSupportScreen';
 import ActivityScreen           from './screens/ActivityScreen';
+import WatchHistoryScreen       from './screens/activity/WatchHistoryScreen';
+import ViewedProfilesScreen     from './screens/activity/ViewedProfilesScreen';
+import LikedVideosScreen        from './screens/activity/LikedVideosScreen';
+import SharedVideosScreen       from './screens/activity/SharedVideosScreen';
+import SearchHistoryScreen      from './screens/activity/SearchHistoryScreen';
 import PrivacyScreen            from './screens/PrivacyScreen';
 import SecurityScreen           from './screens/SecurityScreen';
 import SavedVideosScreen        from './screens/SavedVideosScreen';
@@ -110,15 +114,6 @@ function AppStack() {
         }}
       />
 
-      {/* Pexels Reels */}
-      <Stack.Screen
-        name="PexelsReels"
-        component={PexelsReelsScreen}
-        options={{
-          animation: 'slide_from_right',
-        }}
-      />
-
       {/* Settings */}
       <Stack.Screen
         name="Settings"
@@ -137,6 +132,12 @@ function AppStack() {
 
       {/* Settings sub-screens */}
       <Stack.Screen name="Activity"             component={ActivityScreen}             options={{ animation: 'slide_from_right' }} />
+      {/* Activity sub-screens */}
+      <Stack.Screen name="WatchHistory"         component={WatchHistoryScreen}         options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="ViewedProfiles"       component={ViewedProfilesScreen}       options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="LikedVideos"          component={LikedVideosScreen}          options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="SharedVideos"         component={SharedVideosScreen}         options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="SearchHistory"        component={SearchHistoryScreen}        options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="Privacy"              component={PrivacyScreen}              options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="Security"             component={SecurityScreen}             options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="SavedVideos"          component={SavedVideosScreen}          options={{ animation: 'slide_from_right' }} />

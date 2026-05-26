@@ -2,8 +2,8 @@
 //
 // Lists videos the user has saved/bookmarked. Backed by the existing
 // /api/videos/saved endpoint (own videos) plus the local AsyncStorage set
-// of saved Pexels IDs (so external bookmarks show up too — though full
-// playback for those still uses the original Pexels URL).
+// of saved external-source IDs (so Pixabay bookmarks show up too — though
+// playback for those still uses the original external URL).
 
 import { useState, useCallback } from 'react';
 import {

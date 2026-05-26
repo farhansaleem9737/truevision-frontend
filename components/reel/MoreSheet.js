@@ -67,7 +67,7 @@ export default function MoreSheet({ visible, onClose, item, onHide }) {
 
       case 'share-link': {
         try {
-          const url = item.pexelsUrl || item.videoUrl || '';
+          const url = item.videoUrl || '';
           const message = item.userId?.username
             ? `Check out @${item.userId.username} on TrueVision\n${url}`
             : `Check out this video\n${url}`;

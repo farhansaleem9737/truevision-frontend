@@ -14,8 +14,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, TouchableWithoutFeedback,
-  Image, TextInput, KeyboardAvoidingView, Animated,
+  View, Text, FlatList, TouchableOpacity,
   StatusBar, Dimensions, Platform, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { Ionicons }              from '@expo/vector-icons';
@@ -23,182 +22,27 @@ import { useSafeAreaInsets }     from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import TopTabs                   from '../components/reel/TopTabs';
 import ReelCard                  from '../components/reel/ReelCard';
+import CommentsSheet             from '../components/comments/CommentsSheet';
 import videoService              from '../services/VideoService';
 import pixabayService            from '../services/pixabayService';
 
-const { width, height } = Dimensions.get('window');
+const { height } = Dimensions.get('window');
 const TAB_BAR_BASE = 65;
-
-const fmt = (n) => {
-  if (!n && n !== 0) return '0';
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
-  return String(n);
-};
-
-// ─── Comment Sheet ───────────────────────────────────────────────────────────
-const CommentSheet = ({ visible, onClose, videoId, commentCount = 0, isPexels = false }) => {
-  const insets = useSafeAreaInsets();
-  const slideY = useRef(new Animated.Value(height)).current;
-  const [comments, setComments] = useState([]);
-  const [text, setText]         = useState('');
-  const [loading, setLoading]   = useState(false);
-  const [count, setCount]       = useState(commentCount);
-  const [likedMap, setLikedMap] = useState({});
-
-  useEffect(() => setCount(commentCount), [commentCount]);
-
-  // Load comments — only for our own videos. Pexels items have no comments in our DB.
-  useEffect(() => {
-    if (!visible) return;
-    if (isPexels || !videoId) {
-      setComments([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    videoService.getComments(videoId, 1, 'new').then((res) => {
-      if (res.success) setComments(res.comments || []);
-      setLoading(false);
-    });
-  }, [visible, videoId, isPexels]);
-
-  useEffect(() => {
-    Animated.spring(slideY, {
-      toValue: visible ? 0 : height,
-      useNativeDriver: true, friction: 26, tension: 240,
-    }).start();
-  }, [visible]);
-
-  const post = useCallback(async () => {
-    if (!text.trim() || !videoId || isPexels) {
-      setText('');
-      return;
-    }
-    const res = await videoService.addComment(videoId, text.trim());
-    if (res.success && res.comment) {
-      setComments(p => [res.comment, ...p]);
-      setCount(n => n + 1);
-    }
-    setText('');
-  }, [text, videoId, isPexels]);
-
-  const tabOffset = TAB_BAR_BASE + (insets.bottom > 0 ? insets.bottom : Platform.select({ ios: 25, android: 10 }));
-
-  return (
-    <>
-      {visible && (
-        <TouchableWithoutFeedback onPress={onClose}>
-          <View style={S.sheetBackdrop} />
-        </TouchableWithoutFeedback>
-      )}
-      <Animated.View style={[S.sheet, { bottom: tabOffset, transform: [{ translateY: slideY }] }]}>
-        <View style={{ alignItems: 'center', paddingTop: 10 }}>
-          <View style={S.sheetHandle} />
-        </View>
-        <View style={S.sheetHeader}>
-          <Text style={S.sheetTitle}>Comments</Text>
-          <Text style={S.sheetCount}>{fmt(count)}</Text>
-          <TouchableOpacity onPress={onClose} style={{ marginLeft: 'auto' }}>
-            <Ionicons name="close" size={22} color="#64748b" />
-          </TouchableOpacity>
-        </View>
-        <View style={S.sheetDivider} />
-
-        {loading ? (
-          <ActivityIndicator style={{ paddingTop: 40 }} color="#3b82f6" />
-        ) : (
-          <FlatList
-            data={comments}
-            keyExtractor={(item) => item._id || String(Math.random())}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ paddingBottom: 8 }}
-            renderItem={({ item }) => {
-              const u = item.userId || item.user || {};
-              const cId = item._id || item.id;
-              return (
-                <View style={S.cRow}>
-                  <Image source={{ uri: u.profileImage || u.avatar || 'https://i.pravatar.cc/150?img=10' }} style={S.cAvatar} />
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                      <Text style={S.cUser}>{u.username || u.name || 'user'}</Text>
-                    </View>
-                    <Text style={S.cText}>{item.text || item.content || ''}</Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        setLikedMap(m => ({ ...m, [cId]: !m[cId] }));
-                        videoService.toggleCommentLike(videoId, cId);
-                      }}
-                      style={{ flexDirection: 'row', alignItems: 'center', marginTop: 5 }}
-                    >
-                      <Ionicons
-                        name={likedMap[cId] ? 'heart' : 'heart-outline'}
-                        size={13}
-                        color={likedMap[cId] ? '#e11d48' : '#94a3b8'}
-                      />
-                      <Text style={S.cLikes}>{fmt((item.likesCount || item.likes || 0) + (likedMap[cId] ? 1 : 0))}</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            }}
-            ListEmptyComponent={
-              <View style={{ alignItems: 'center', paddingTop: 50, paddingHorizontal: 30 }}>
-                <Ionicons name="chatbubble-ellipses-outline" size={42} color="#cbd5e1" />
-                <Text style={{ color: '#475569', fontSize: 15, fontWeight: '700', marginTop: 14 }}>
-                  Be the first to comment
-                </Text>
-                <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 6, textAlign: 'center' }}>
-                  {isPexels
-                    ? 'Conversations on imported videos start here.'
-                    : 'No comments yet — share your thoughts!'}
-                </Text>
-              </View>
-            }
-          />
-        )}
-
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[S.cInputRow, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-            <View style={S.cInputBox}>
-              <TextInput
-                value={text}
-                onChangeText={setText}
-                placeholder={isPexels ? 'Comments are read-only on imported videos' : 'Add a comment…'}
-                placeholderTextColor="#94a3b8"
-                style={S.cInput}
-                returnKeyType="send"
-                onSubmitEditing={post}
-                editable={!isPexels}
-              />
-              {text.trim().length > 0 && (
-                <TouchableOpacity onPress={post}>
-                  <Text style={S.cPostBtn}>Post</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Animated.View>
-    </>
-  );
-};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 //
-// Interleave own videos into a Pexels-heavy stream. With ratio=4, every 5th
-// slot (positions 0, 5, 10, …) is reserved for a user video; the rest is Pexels.
-// When a side runs out, the other side fills the remaining slots.
-const interleave = (own, pexels, ratio = 4) => {
+// Interleave own videos into an external-heavy stream. With ratio=4, every 5th
+// slot (positions 0, 5, 10, …) is reserved for a user video; the rest is the
+// external source. When a side runs out, the other side fills the remaining slots.
+const interleave = (own, external, ratio = 4) => {
   const out = [];
-  let oi = 0, pi = 0, n = 0;
-  while (oi < own.length || pi < pexels.length) {
+  let oi = 0, ei = 0, n = 0;
+  while (oi < own.length || ei < external.length) {
     const slotForOwn = (n % (ratio + 1) === 0);
     if (slotForOwn && oi < own.length) {
       out.push(own[oi++]);
-    } else if (pi < pexels.length) {
-      out.push(pexels[pi++]);
+    } else if (ei < external.length) {
+      out.push(external[ei++]);
     } else if (oi < own.length) {
       out.push(own[oi++]);
     }
@@ -237,10 +81,10 @@ export default function HomeScreen() {
   const [feed, setFeed]               = useState([]);
   const [loading, setLoading]         = useState(true);
   const [refreshing, setRefreshing]   = useState(false);
-  const [pexelsPage, setPexelsPage]   = useState(1);
-  const [pexelsHasMore, setPexelsHasMore] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [pexelsError, setPexelsError] = useState(null);  // banner copy when pexels fetch fails
+  const [externalPage, setExternalPage]       = useState(1);
+  const [externalHasMore, setExternalHasMore] = useState(true);
+  const [loadingMore, setLoadingMore]         = useState(false);
+  const [externalError, setExternalError]     = useState(null);  // banner copy when external-feed fetch fails
 
   const flatListRef = useRef(null);
 
@@ -265,17 +109,17 @@ export default function HomeScreen() {
     console.log(`[HomeScreen] merged feed length: ${merged.length}`);
 
     setFeed(merged);
-    setPexelsPage(1);
-    setPexelsHasMore(pxRes.hasMore !== false);
-    setPexelsError(pxRes.success ? null : (pxRes.error || 'Could not load curated feed'));
+    setExternalPage(1);
+    setExternalHasMore(pxRes.hasMore !== false);
+    setExternalError(pxRes.success ? null : (pxRes.error || 'Could not load curated feed'));
     setActiveIndex(0);
   }, []);
 
-  // ── Load more pages — only Pixabay (own videos already loaded once) ──────
-  const loadMorePexels = useCallback(async () => {
-    if (loadingMore || !pexelsHasMore || activeTab !== 'trending') return;
+  // ── Load more pages — only external (own videos already loaded once) ────
+  const loadMoreExternal = useCallback(async () => {
+    if (loadingMore || !externalHasMore || activeTab !== 'trending') return;
     setLoadingMore(true);
-    const next = pexelsPage + 1;
+    const next = externalPage + 1;
     console.log(`[HomeScreen] loading pixabay page ${next}…`);
     const pxRes = await pixabayService.getInformativeFeed(next);
     if (pxRes.success) {
@@ -285,14 +129,14 @@ export default function HomeScreen() {
         const seen = new Set(prev.map((p) => p.id || p._id));
         return [...prev, ...more.filter((m) => !seen.has(m.id))];
       });
-      setPexelsPage(next);
-      setPexelsHasMore(pxRes.hasMore !== false);
+      setExternalPage(next);
+      setExternalHasMore(pxRes.hasMore !== false);
     } else {
       console.log(`[HomeScreen] pixabay page ${next} failed: ${pxRes.error}`);
-      setPexelsHasMore(false);
+      setExternalHasMore(false);
     }
     setLoadingMore(false);
-  }, [loadingMore, pexelsHasMore, pexelsPage, activeTab]);
+  }, [loadingMore, externalHasMore, externalPage, activeTab]);
 
   // ── Tab change ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -340,7 +184,7 @@ export default function HomeScreen() {
     setFeed((prev) => prev.filter((v) => (v._id || v.id) !== (it._id || it.id)));
   }, []);
 
-  // ── Render — same ReelCard for both own + Pexels ───────────────────────
+  // ── Render — same ReelCard for both own + external sources ────────────
   const renderItem = useCallback(({ item, index }) => {
     const isActive = index === activeIndex && !showComments;
     return (
@@ -389,7 +233,7 @@ export default function HomeScreen() {
           viewabilityConfig={viewConfig}
           getItemLayout={(_, i) => ({ length: height, offset: height * i, index: i })}
           scrollEnabled={!showComments}
-          onEndReached={loadMorePexels}
+          onEndReached={loadMoreExternal}
           onEndReachedThreshold={1.2}
           refreshing={refreshing}
           onRefresh={onRefresh}
@@ -420,11 +264,11 @@ export default function HomeScreen() {
         style={{ top: insets.top + 10 }}
       />
 
-      {/* Pexels-failed banner — slim, dismissible, sits below the tab row */}
-      {activeTab === 'trending' && pexelsError ? (
+      {/* External-feed failure banner — slim, dismissible, sits below the tab row */}
+      {activeTab === 'trending' && externalError ? (
         <View style={[S.banner, { top: insets.top + 56 }]}>
           <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
-          <Text style={S.bannerText} numberOfLines={2}>{pexelsError}</Text>
+          <Text style={S.bannerText} numberOfLines={2}>{externalError}</Text>
           <TouchableOpacity
             onPress={() => { setLoading(true); loadTrending().finally(() => setLoading(false)); }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -432,7 +276,7 @@ export default function HomeScreen() {
             <Text style={S.bannerRetry}>Retry</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => setPexelsError(null)}
+            onPress={() => setExternalError(null)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={{ marginLeft: 8 }}
           >
@@ -441,12 +285,13 @@ export default function HomeScreen() {
         </View>
       ) : null}
 
-      <CommentSheet
+      <CommentsSheet
         visible={showComments}
         onClose={() => setShowComments(false)}
         videoId={activeItem?._id || activeItem?.id}
         commentCount={activeItem?.commentsCount ?? activeItem?.comments ?? 0}
-        isPexels={activeItem?.source === 'pexels'}
+        isExternal={!!activeItem?.source && activeItem.source !== 'truevision'}
+        tabOffset={tabOffset}
       />
     </View>
   );
@@ -495,40 +340,4 @@ const S = StyleSheet.create({
     textAlign: 'center', marginTop: 8, paddingHorizontal: 48, lineHeight: 19,
   },
 
-  // Comment sheet
-  sheetBackdrop: {
-    position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
-    backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 50,
-  },
-  sheet: {
-    position: 'absolute', left: 0, right: 0,
-    height: height * 0.65,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 22, borderTopRightRadius: 22,
-    zIndex: 100,
-  },
-  sheetHandle:  { width: 36, height: 4, borderRadius: 2, backgroundColor: '#cbd5e1', marginBottom: 4 },
-  sheetHeader:  { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 },
-  sheetTitle:   { color: '#0f172a', fontWeight: '800', fontSize: 16 },
-  sheetCount:   { color: '#64748b', fontWeight: '600', fontSize: 14, marginLeft: 8 },
-  sheetDivider: { height: 1, backgroundColor: '#f1f5f9' },
-
-  cRow:     { flexDirection: 'row', paddingHorizontal: 20, paddingTop: 14, marginBottom: 4 },
-  cAvatar:  { width: 34, height: 34, borderRadius: 17, marginRight: 12, backgroundColor: '#e2e8f0' },
-  cUser:    { color: '#0f172a', fontSize: 13, fontWeight: '700' },
-  cText:    { color: '#334155', fontSize: 14, lineHeight: 20 },
-  cLikes:   { color: '#94a3b8', fontSize: 11, marginLeft: 4 },
-
-  cInputRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingTop: 10,
-    borderTopWidth: 1, borderTopColor: '#f1f5f9', backgroundColor: '#fff',
-  },
-  cInputBox: {
-    flex: 1, flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#f1f5f9', borderRadius: 24,
-    paddingHorizontal: 16, paddingVertical: 10,
-  },
-  cInput:   { flex: 1, color: '#0f172a', fontSize: 14 },
-  cPostBtn: { color: '#3b82f6', fontWeight: '800', fontSize: 14 },
 });

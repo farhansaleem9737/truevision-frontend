@@ -8,40 +8,65 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SERVER_URL } from './config';
 
 let socket = null;
+let connecting = null;   // de-dupes concurrent connect() calls during handshake
 
 const socketService = {
-  /** Connect (or reconnect) with the user's JWT. */
+  /** Connect (or reconnect) with the user's JWT.
+   *  Idempotent — safe to call from multiple places (AuthContext, ChatScreen,
+   *  ChatConversationScreen) without spawning duplicate sockets. */
   connect: async () => {
     if (socket?.connected) return socket;
+    if (connecting) return connecting;   // a handshake is already in flight
 
-    const token = await AsyncStorage.getItem('authToken');
-    if (!token) {
-      console.warn('[Socket] No auth token — skipping connection');
-      return null;
+    connecting = (async () => {
+      const token = await AsyncStorage.getItem('authToken');
+      if (!token) {
+        console.warn('[Socket] No auth token — skipping connection');
+        return null;
+      }
+
+      console.log('[Socket] Connecting to', SERVER_URL);
+
+      socket = io(SERVER_URL, {
+        auth: { token },
+        // websocket-first, fall back to long-polling if it fails.
+        // Mobile networks / corporate WiFi sometimes block raw WS upgrades —
+        // polling gets us through. Socket.IO will upgrade once stable.
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: 10,
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 10000,
+        timeout: 15000,
+      });
+
+      socket.on('connect', () => {
+        console.log('[Socket] Connected:', socket.id, '| transport:', socket.io.engine.transport.name);
+      });
+
+      socket.on('connect_error', (err) => {
+        // err.message is often just "websocket error" — log the description
+        // and the URL so the cause is obvious (server down, wrong IP, etc).
+        console.warn(
+          '[Socket] Connection error:',
+          err.message,
+          '| target:', SERVER_URL,
+          '| detail:', err.description?.message || err.description || 'n/a',
+        );
+      });
+
+      socket.on('disconnect', (reason) => {
+        console.log('[Socket] Disconnected:', reason);
+      });
+
+      return socket;
+    })();
+
+    try {
+      return await connecting;
+    } finally {
+      connecting = null;
     }
-
-    socket = io(SERVER_URL, {
-      auth: { token },
-      transports: ['websocket'],       // skip polling — faster on mobile
-      reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 2000,
-      timeout: 15000,
-    });
-
-    socket.on('connect', () => {
-      console.log('[Socket] Connected:', socket.id);
-    });
-
-    socket.on('connect_error', (err) => {
-      console.warn('[Socket] Connection error:', err.message);
-    });
-
-    socket.on('disconnect', (reason) => {
-      console.log('[Socket] Disconnected:', reason);
-    });
-
-    return socket;
   },
 
   /** Disconnect and clean up. */
