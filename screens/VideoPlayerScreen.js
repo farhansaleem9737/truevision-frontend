@@ -18,6 +18,8 @@ import { useIsFocused }              from '@react-navigation/native';
 import videoService                  from '../services/VideoService';
 import { useAuth }                   from '../context/AuthContext';
 import CommentsSheet                 from '../components/comments/CommentsSheet';
+import InfoButton                    from '../components/video/InfoButton';
+import VideoInfoPanel                from '../components/video/VideoInfoPanel';
 
 const { width, height } = Dimensions.get('window');
 
@@ -229,7 +231,7 @@ const SongTicker = ({ song }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLE VIDEO ITEM
 // ─────────────────────────────────────────────────────────────────────────────
-const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset, onMore }) => {
+const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset, onMore, resumePosition = 0 }) => {
 
   // ── expo-video player ─────────────────────────────────────────────────────
   const player = useVideoPlayer(item.uri, (p) => {
@@ -242,13 +244,30 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
   const [duration,    setDuration]    = useState(0);
   const [isReady,     setIsReady]     = useState(false);
 
+  // Resume-from-position runs exactly once on the first readyToPlay event.
+  // Coming from Watch History, the screen passes the saved lastPlaybackPosition;
+  // any other entry point passes 0 and the seek is a no-op.
+  const resumeApplied = useRef(false);
+
   useEffect(() => {
     const s1 = player.addListener('statusChange', ({ status }) => {
-      if (status === 'readyToPlay') { setIsReady(true); setDuration(player.duration ?? 0); }
+      if (status === 'readyToPlay') {
+        setIsReady(true);
+        setDuration(player.duration ?? 0);
+
+        if (!resumeApplied.current && resumePosition > 0) {
+          resumeApplied.current = true;
+          // Clamp to (duration - 1s) so we don't land on the very last frame
+          // and immediately loop the user back to the start.
+          const dur = player.duration ?? 0;
+          const target = dur > 0 ? Math.min(resumePosition, Math.max(0, dur - 1)) : resumePosition;
+          try { player.currentTime = target; } catch (_) { /* harmless on early-status edge */ }
+        }
+      }
     });
     const s2 = player.addListener('timeUpdate', ({ currentTime:t }) => setCurrentTime(t ?? 0));
     return () => { s1.remove(); s2.remove(); };
-  }, [player]);
+  }, [player, resumePosition]);
 
   // ── Playback control — pause when screen unfocused (no background play) ──
   const [userPaused, setUserPaused]   = useState(false);
@@ -262,6 +281,7 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
   const [isSaved,     setIsSaved]     = useState(item.isSaved ?? false);
   const [isReposted,  setIsReposted]  = useState(item.isReposted ?? false);
   const [isMuted,     setIsMuted]     = useState(false);
+  const [showInfo,    setShowInfo]    = useState(false);
   const [isFollowing, setIsFollowing] = useState(item.isFollowing ?? false);
   const [likes,       setLikes]       = useState(item.likes ?? 0);
   const [saves,       setSaves]       = useState(item.saves ?? 0);
@@ -402,6 +422,19 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
           <Ionicons name={isMuted ? 'volume-mute' : 'volume-high'} size={18} color="white" />
         </TouchableOpacity>
       </View>
+
+      {/* ── TOP-RIGHT: INFO BUTTON (ⓘ) ── */}
+      {/* Sits just left of the mute button (mute is right:14 width:40 → ⓘ at right:64). */}
+      <View style={{ position: 'absolute', top: 54, right: 64, zIndex: 30 }}>
+        <InfoButton onPress={() => setShowInfo(true)} />
+      </View>
+
+      {/* ── INFO PANEL bottom sheet ── */}
+      <VideoInfoPanel
+        visible={showInfo}
+        onClose={() => setShowInfo(false)}
+        video={item}
+      />
 
       {/* ── PROGRESS BAR  (thin white line just above info panel) ── */}
       <View pointerEvents="none" style={[S.progressTrack, { bottom: tabOffset + 96 }]}>
@@ -735,6 +768,10 @@ export default function VideoPlayerScreen({ navigation, route }) {
   }, [authUser?._id, navigation]);
 
   // Stable referential identity for renderItem so VideoItem doesn't re-mount each render.
+  // Resume position — only applied to the first video the user lands on,
+  // coming in from Watch History via route.params.resumePosition.
+  const resumePosition = Number(params?.resumePosition) || 0;
+
   const renderItem = useCallback(({ item, index }) => (
     <VideoItem
       item={item}
@@ -743,8 +780,11 @@ export default function VideoPlayerScreen({ navigation, route }) {
       onOpenComments={() => setShowComments(true)}
       tabOffset={tabOffset}
       onMore={handleMore}
+      // Pass resumePosition only for the entry-point item. Subsequent items
+      // start at 0 (default) so scroll-through playback feels normal.
+      resumePosition={index === initialIndex ? resumePosition : 0}
     />
-  ), [activeIndex, showComments, isFocused, handleMore, tabOffset]);
+  ), [activeIndex, showComments, isFocused, handleMore, tabOffset, initialIndex, resumePosition]);
 
   // Safe key extraction — prefer stable id, fall back to index for legacy items.
   const keyExtractor = useCallback(

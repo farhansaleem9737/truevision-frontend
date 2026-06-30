@@ -86,10 +86,10 @@ export default function ForgotPasswordScreen({ navigation }) {
 
   return (
     <LinearGradient
-      colors={['#0f172a', '#1e293b', '#334155']}
+      colors={['#FFFFFF', '#F8FAFC', '#FFFFFF']}
       style={{ flex: 1 }}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -105,33 +105,39 @@ export default function ForgotPasswordScreen({ navigation }) {
             className="mb-8"
             disabled={loading}
           >
-            <Ionicons name="arrow-back" size={24} color="#fff" />
+            <Ionicons name="arrow-back" size={24} color="#0F172A" />
           </TouchableOpacity>
 
           {/* Header */}
           <View className="items-center mb-12">
-            <View className="w-24 h-24 bg-red-500 rounded-full items-center justify-center mb-6">
-              <Ionicons name="lock-closed-outline" size={48} color="#fff" />
+            <View
+              className="w-24 h-24 rounded-full items-center justify-center mb-6"
+              style={{ backgroundColor: 'rgba(212, 160, 23, 0.12)' }}
+            >
+              <Ionicons name="lock-closed-outline" size={48} color="#D4A017" />
             </View>
-            
-            <Text className="text-3xl font-black text-white mb-3">
-              Forgot Password?
+
+            <Text style={{ fontSize: 30, fontWeight: '900', color: '#0F172A', marginBottom: 10 }}>
+              Forgot <Text style={{ color: '#D4A017' }}>Password?</Text>
             </Text>
-            <Text className="text-slate-400 text-center text-base px-8">
-              No worries! Enter your email and we'll send you a reset code
+            <Text style={{ fontSize: 15, color: '#64748B', textAlign: 'center', paddingHorizontal: 32, fontWeight: '500' }}>
+              No worries! Enter your email and we&apos;ll send you a reset code
             </Text>
           </View>
 
           {/* Email Input */}
           <View style={{ marginBottom: 32 }}>
-            <Text className="text-slate-300 text-sm font-medium mb-2 ml-1">
+            <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 8, marginLeft: 4 }}>
               Email Address
             </Text>
-            <View className="flex-row items-center bg-slate-800/50 rounded-2xl px-4 py-1 border border-slate-700">
-              <Ionicons name="mail-outline" size={20} color="#94a3b8" />
+            <View
+              className="flex-row items-center px-4 py-1"
+              style={{ backgroundColor: '#F8FAFC', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.45)' }}
+            >
+              <Ionicons name="mail-outline" size={20} color="#D4A017" />
               <TextInput
                 placeholder="Enter your email"
-                placeholderTextColor="#64748b"
+                placeholderTextColor="#94A3B8"
                 value={email}
                 onChangeText={(text) => {
                   setEmail(text);
@@ -140,11 +146,11 @@ export default function ForgotPasswordScreen({ navigation }) {
                 autoCapitalize="none"
                 keyboardType="email-address"
                 editable={!loading}
-                className="flex-1 text-white text-base px-3 py-3"
+                style={{ flex: 1, color: '#0F172A', fontSize: 16, paddingHorizontal: 12, paddingVertical: 12 }}
               />
             </View>
             {error && (
-              <Text className="text-red-400 text-xs mt-1 ml-1">{error}</Text>
+              <Text className="text-red-500 text-xs mt-1 ml-1">{error}</Text>
             )}
           </View>
 
@@ -152,49 +158,54 @@ export default function ForgotPasswordScreen({ navigation }) {
           <TouchableOpacity
             onPress={handleSendCode}
             disabled={loading}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
           >
             <LinearGradient
-              colors={loading ? ['#64748b', '#475569'] : ['#ef4444', '#dc2626', '#b91c1c']}
+              colors={loading ? ['#94A3B8', '#64748B'] : ['#E0B028', '#D4A017', '#B8860B']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
-              className="rounded-2xl py-4 items-center"
               style={{
-                shadowColor: '#ef4444',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: loading ? 0.1 : 0.3,
-                shadowRadius: 8,
-                elevation: loading ? 2 : 8,
+                borderRadius: 16,
+                paddingVertical: 16,
+                alignItems: 'center',
+                shadowColor: '#D4A017',
+                shadowOffset: { width: 0, height: 6 },
+                shadowOpacity: loading ? 0.1 : 0.35,
+                shadowRadius: 14,
+                elevation: loading ? 2 : 10,
               }}
             >
               {loading ? (
                 <View className="flex-row items-center">
-                  <ActivityIndicator color="#fff" size="small" />
-                  <Text className="text-white text-base font-bold ml-2">
+                  <ActivityIndicator color="#111111" size="small" />
+                  <Text style={{ color: '#111111', fontSize: 16, fontWeight: '800', marginLeft: 10 }}>
                     Sending Code...
                   </Text>
                 </View>
               ) : (
                 <View className="flex-row items-center">
-                  <Text className="text-white text-base font-bold mr-2">
+                  <Text style={{ color: '#111111', fontSize: 16, fontWeight: '800', marginRight: 8 }}>
                     Send Reset Code
                   </Text>
-                  <Ionicons name="send-outline" size={20} color="#fff" />
+                  <Ionicons name="send-outline" size={20} color="#111111" />
                 </View>
               )}
             </LinearGradient>
           </TouchableOpacity>
 
           {/* Info */}
-          <View className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-4 mt-6">
+          <View
+            className="rounded-2xl p-4 mt-6"
+            style={{ backgroundColor: 'rgba(212, 160, 23, 0.08)', borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.25)' }}
+          >
             <View className="flex-row items-start">
-              <Ionicons name="information-circle-outline" size={20} color="#60a5fa" />
+              <Ionicons name="information-circle-outline" size={20} color="#D4A017" />
               <View className="flex-1 ml-3">
-                <Text className="text-slate-400 text-xs leading-5">
-                  • We'll send a 6-digit verification code to your email{'\n'}
+                <Text style={{ color: '#64748B', fontSize: 12, lineHeight: 18 }}>
+                  • We&apos;ll send a 6-digit verification code to your email{'\n'}
                   • The code will expire in 15 minutes{'\n'}
-                  • Check your spam folder if you don't see the email{'\n'}
-                  • For security, we won't confirm if the email exists
+                  • Check your spam folder if you don&apos;t see the email{'\n'}
+                  • For security, we won&apos;t confirm if the email exists
                 </Text>
               </View>
             </View>
@@ -206,9 +217,9 @@ export default function ForgotPasswordScreen({ navigation }) {
             className="mt-8 items-center"
             disabled={loading}
           >
-            <Text className="text-slate-400 text-sm">
+            <Text style={{ color: '#64748B', fontSize: 14 }}>
               Remember your password?{' '}
-              <Text className="text-blue-400 font-semibold">Sign In</Text>
+              <Text style={{ color: '#D4A017', fontWeight: '700' }}>Sign In</Text>
             </Text>
           </TouchableOpacity>
         </Animated.View>

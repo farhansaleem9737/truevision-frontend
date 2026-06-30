@@ -254,6 +254,68 @@ const videoService = {
     }
   },
 
+  // ── ATTACHMENT UPLOAD (source evidence / news files) ─────────────────────────
+  // Used by the Upload screen when the creator attaches a PDF, doc or image to
+  // back a Fact / News post. Two-step flow mirrors the main video upload:
+  //   1. Fetch a Cloudinary signed payload from our backend (kind = 'image'|'raw').
+  //   2. POST the file bytes directly to Cloudinary using those params.
+  //
+  // Returns: { success, url, publicId, type, name, size } on success.
+  uploadAttachment: async (fileUri, { name = 'file', mimeType = '', size = 0 } = {}) => {
+    try {
+      // 'raw' covers PDFs and arbitrary docs; 'image' triggers Cloudinary's
+      // image pipeline (mime sniffing, format conversion, etc).
+      const looksLikeImage = /^image\//i.test(mimeType);
+      const kind = looksLikeImage ? 'image' : 'raw';
+
+      const sigRes = await api.get('/attachment-signature', { params: { kind } });
+      if (!sigRes.data?.success) {
+        return { success: false, message: sigRes.data?.message || 'Signature failed' };
+      }
+      const {
+        signature, timestamp, folder, resourceType,
+        api_key, cloud_name,
+      } = sigRes.data;
+
+      const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloud_name}/${resourceType}/upload`;
+
+      const formData = new FormData();
+      formData.append('file', {
+        uri:  fileUri,
+        type: mimeType || (looksLikeImage ? 'image/jpeg' : 'application/octet-stream'),
+        name,
+      });
+      formData.append('api_key',   api_key);
+      formData.append('timestamp', String(timestamp));
+      formData.append('signature', signature);
+      formData.append('folder',    folder);
+
+      const res = await fetch(cloudinaryUrl, { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok || !data.secure_url) {
+        return { success: false, message: data?.error?.message || `HTTP ${res.status}` };
+      }
+
+      // Classify type for downstream use (videoCreate schema).
+      const lowerName = name.toLowerCase();
+      let type = 'document';
+      if (looksLikeImage)                 type = 'image';
+      else if (lowerName.endsWith('.pdf')) type = 'pdf';
+
+      return {
+        success:  true,
+        url:      data.secure_url,
+        publicId: data.public_id,
+        type,
+        name,
+        size,
+      };
+    } catch (e) {
+      console.error('[uploadAttachment]', e.message);
+      return { success: false, message: e.message };
+    }
+  },
+
   // ── UPDATE ───────────────────────────────────────────────────────────────────
   updateVideo: async (id, data) => {
     try {
@@ -321,8 +383,9 @@ const videoService = {
 
   // ── COMMENTS ─────────────────────────────────────────────────────────────────
   getComments:       async (videoId, page = 1, sort = 'new') => { try { return (await api.get(`/${videoId}/comments`, { params: { page, sort } })).data; } catch(e) { return { success: false, comments: [] }; } },
-  addComment:        async (videoId, text)  => { try { return (await api.post(`/${videoId}/comments`, { text })).data;  } catch(e) { return { success: false }; } },
-  deleteComment:     async (videoId, cid)   => { try { return (await api.delete(`/${videoId}/comments/${cid}`)).data;   } catch(e) { return { success: false }; } },
+  addComment:        async (videoId, text)  => { try { return (await api.post(`/${videoId}/comments`, { text })).data;  } catch(e) { return { success: false, message: e.response?.data?.message || e.message }; } },
+  editComment:       async (videoId, cid, text) => { try { return (await api.put(`/${videoId}/comments/${cid}`, { text })).data; } catch(e) { return { success: false, message: e.response?.data?.message || e.message }; } },
+  deleteComment:     async (videoId, cid)   => { try { return (await api.delete(`/${videoId}/comments/${cid}`)).data;   } catch(e) { return { success: false, message: e.response?.data?.message || e.message }; } },
   toggleCommentLike: async (videoId, cid)   => { try { return (await api.post(`/${videoId}/comments/${cid}/like`)).data;} catch(e) { return { success: false }; } },
   addReply:          async (videoId, cid, text) => { try { return (await api.post(`/${videoId}/comments/${cid}/reply`, { text })).data; } catch(e) { return { success: false }; } },
 };

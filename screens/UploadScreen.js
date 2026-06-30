@@ -9,6 +9,8 @@ import { Ionicons }        from '@expo/vector-icons';
 import * as ImagePicker    from 'expo-image-picker';
 import ScreenContainer     from '../components/ScreenContainer';
 import videoService        from '../services/VideoService';
+import ContentTypePicker   from '../components/upload/ContentTypePicker';
+import SourceUploader      from '../components/upload/SourceUploader';
 
 // ─── Pressable card with subtle scale-on-press feedback ─────────────────────
 const PressableCard = ({ onPress, disabled, style, children }) => {
@@ -34,18 +36,18 @@ const PressableCard = ({ onPress, disabled, style, children }) => {
   );
 };
 
-// ── Categories matching the backend enum ─────────────────────────────────────
+// ── Categories matching the backend enum (informative / educational) ─────────
 const CATEGORIES = [
-  { id: 'entertainment', label: 'Entertainment', icon: 'film',           color: '#ec4899' },
-  { id: 'music',         label: 'Music',         icon: 'musical-notes',  color: '#8b5cf6' },
-  { id: 'sports',        label: 'Sports',        icon: 'football',       color: '#ef4444' },
-  { id: 'gaming',        label: 'Gaming',        icon: 'game-controller',color: '#06b6d4' },
-  { id: 'education',     label: 'Education',     icon: 'school',         color: '#8b5cf6' },
-  { id: 'tech',          label: 'Technology',    icon: 'hardware-chip',  color: '#3b82f6' },
-  { id: 'food',          label: 'Food',          icon: 'restaurant',     color: '#f97316' },
-  { id: 'travel',        label: 'Travel',        icon: 'airplane',       color: '#10b981' },
-  { id: 'fashion',       label: 'Fashion',       icon: 'shirt',          color: '#f59e0b' },
-  { id: 'other',         label: 'Other',         icon: 'apps',           color: '#6b7280' },
+  { id: 'education',     label: 'Education',     icon: 'school',          color: '#8b5cf6' },
+  { id: 'tech',          label: 'Technology',    icon: 'hardware-chip',   color: '#3b82f6' },
+  { id: 'programming',   label: 'Programming',   icon: 'code-slash',      color: '#06b6d4' },
+  { id: 'business',      label: 'Business',      icon: 'briefcase',       color: '#0ea5e9' },
+  { id: 'finance',       label: 'Finance',       icon: 'cash',            color: '#10b981' },
+  { id: 'islamic',       label: 'Islamic',       icon: 'moon',            color: '#059669' },
+  { id: 'motivation',    label: 'Motivation',    icon: 'flame',           color: '#f97316' },
+  { id: 'news',          label: 'News',          icon: 'newspaper',       color: '#ef4444' },
+  { id: 'productivity',  label: 'Productivity',  icon: 'checkmark-done',  color: '#f59e0b' },
+  { id: 'other',         label: 'Other',         icon: 'apps',            color: '#6b7280' },
 ];
 
 const VISIBILITY = [
@@ -66,6 +68,16 @@ export default function UploadScreen({ navigation }) {
   const [allowDownload, setAllowDownload] = useState(true);
   const [uploading,    setUploading]    = useState(false);
   const [progress,     setProgress]     = useState(0);
+
+  // ── Content type + sources (all optional) ────────────────────────────────
+  // contentType is one of: null | 'fact' | 'news' | 'opinion'. The picker
+  // shows the relevant source block below it. Opinion is just a disclaimer.
+  const [contentType,    setContentType]    = useState(null);
+  const [sourceUrl,      setSourceUrl]      = useState('');
+  const [sourceFiles,    setSourceFiles]    = useState([]);
+  const [newsUrl,        setNewsUrl]        = useState('');
+  const [newsPublisher,  setNewsPublisher]  = useState('');
+  const [newsFiles,      setNewsFiles]      = useState([]);
 
   const pickVideo = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -114,6 +126,15 @@ export default function UploadScreen({ navigation }) {
       allowDownload,
       mimeType:     videoAsset.mimeType  || 'video/mp4',
       durationMs:   videoAsset.duration  || 0,   // used by VideoCompressor for progress estimation
+
+      // Content type + sources — optional. The backend strips the slots
+      // that don't apply to the chosen type, so it's safe to send all.
+      contentType,
+      sourceUrl:     contentType === 'fact' ? sourceUrl.trim()     : '',
+      sourceFiles:   contentType === 'fact' ? sourceFiles          : [],
+      newsUrl:       contentType === 'news' ? newsUrl.trim()       : '',
+      newsPublisher: contentType === 'news' ? newsPublisher.trim() : '',
+      newsFiles:     contentType === 'news' ? newsFiles            : [],
     };
 
     const res = await videoService.uploadVideo(
@@ -139,6 +160,9 @@ export default function UploadScreen({ navigation }) {
             setVideoAsset(null); setTitle(''); setDescription('');
             setTags(''); setSong(''); setCategory(''); setVisibility('public');
             setAllowDownload(true);
+            setContentType(null);
+            setSourceUrl(''); setSourceFiles([]);
+            setNewsUrl(''); setNewsPublisher(''); setNewsFiles([]);
             navigation.navigate('Profile');
           },
         }],
@@ -314,6 +338,77 @@ export default function UploadScreen({ navigation }) {
                     </TouchableOpacity>
                   ))}
                 </View>
+              </View>
+
+              {/* Content type — Fact / News / Opinion (optional) */}
+              <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 20, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a', marginBottom: 4 }}>Content Type</Text>
+                <Text style={{ fontSize: 12.5, color: '#64748b', marginBottom: 14 }}>
+                  Optional — choose how viewers should read this video.
+                </Text>
+                <ContentTypePicker value={contentType} onChange={setContentType} />
+
+                {/* Fact → Supporting Evidence */}
+                {contentType === 'fact' ? (
+                  <View style={{ marginTop: 16 }}>
+                    <SourceUploader
+                      title="Supporting Evidence (Optional)"
+                      files={sourceFiles}
+                      onChangeFiles={setSourceFiles}
+                      url={sourceUrl}
+                      onChangeUrl={setSourceUrl}
+                      urlLabel="Paste source URL (e.g. research paper, article)"
+                    />
+                  </View>
+                ) : null}
+
+                {/* News → News Source */}
+                {contentType === 'news' ? (
+                  <View style={{ marginTop: 16 }}>
+                    <SourceUploader
+                      title="News Source (Optional)"
+                      files={newsFiles}
+                      onChangeFiles={setNewsFiles}
+                      url={newsUrl}
+                      onChangeUrl={setNewsUrl}
+                      urlLabel="Paste news URL"
+                      extraField={
+                        <View style={{
+                          flexDirection: 'row', alignItems: 'center',
+                          backgroundColor: '#f8fafc',
+                          borderRadius: 10, borderWidth: 1, borderColor: '#e5e7eb',
+                          paddingHorizontal: 12, paddingVertical: 10,
+                        }}>
+                          <Ionicons name="business-outline" size={16} color="#64748b" style={{ marginRight: 8 }} />
+                          <TextInput
+                            value={newsPublisher}
+                            onChangeText={setNewsPublisher}
+                            placeholder="Publisher name (e.g. Reuters)"
+                            placeholderTextColor="#94a3b8"
+                            maxLength={120}
+                            style={{ flex: 1, fontSize: 13.5, color: '#0f172a', padding: 0 }}
+                          />
+                        </View>
+                      }
+                    />
+                  </View>
+                ) : null}
+
+                {/* Opinion → disclaimer only */}
+                {contentType === 'opinion' ? (
+                  <View style={{
+                    marginTop: 16,
+                    flexDirection: 'row', alignItems: 'flex-start',
+                    backgroundColor: '#fffbeb',
+                    borderRadius: 12, borderWidth: 1, borderColor: '#fde68a',
+                    paddingHorizontal: 14, paddingVertical: 12, gap: 10,
+                  }}>
+                    <Ionicons name="information-circle" size={18} color="#b45309" />
+                    <Text style={{ flex: 1, fontSize: 12.5, color: '#92400e', lineHeight: 18 }}>
+                      This content represents the creator&apos;s opinion. Viewers will see an &quot;Opinion&quot; chip on the video info panel.
+                    </Text>
+                  </View>
+                ) : null}
               </View>
 
               {/* Visibility */}

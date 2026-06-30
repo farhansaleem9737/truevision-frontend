@@ -124,6 +124,34 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Sign in / sign up with a Google id_token. Returns the same envelope as
+  // `login()` so callers can branch on `result.success` uniformly.
+  const googleSignIn = async (idToken) => {
+    try {
+      const response = await authService.googleSignIn(idToken);
+      if (!response.success) {
+        return { success: false, message: response.message || 'Google sign-in failed' };
+      }
+
+      const normalized = normalizeUser(response.data.user);
+      setToken(response.data.token);
+      setUser(normalized);
+      setIsAuthenticated(true);
+
+      Promise.all([
+        AsyncStorage.setItem('authToken', response.data.token),
+        AsyncStorage.setItem('userData', JSON.stringify(normalized)),
+      ]).catch((e) => console.error('AsyncStorage write error:', e));
+
+      socketService.connect();
+
+      return { success: true, message: response.message, user: normalized };
+    } catch (error) {
+      console.error('Google sign-in error:', error);
+      return { success: false, message: error.message || 'Google sign-in failed' };
+    }
+  };
+
   const register = async (userData) => {
     try {
       const response = await authService.register(userData);
@@ -198,6 +226,7 @@ export const AuthProvider = ({ children }) => {
     loading,
     isAuthenticated,
     login,
+    googleSignIn,
     register,
     verifyEmail,
     logout,

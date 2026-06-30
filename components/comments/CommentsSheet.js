@@ -301,7 +301,7 @@ export default function CommentsSheet({
     if (!editFor || !user?._id) return;
     setEditing(true);
     try {
-      await commentsService.edit(editFor.id, user._id, newText);
+      await commentsService.edit(editFor.id, user._id, newText, videoId);
       setEditFor(null);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     } catch (e) {
@@ -326,7 +326,7 @@ export default function CommentsSheet({
             style: 'destructive',
             onPress: async () => {
               try {
-                await commentsService.remove(c.id);
+                await commentsService.remove(c.id, videoId);
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
               } catch (e) {
                 Alert.alert('Could not delete', e.message || 'Try again');

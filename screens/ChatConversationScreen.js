@@ -1,5 +1,10 @@
 // truevision/screens/ChatConversationScreen.js
 //
+// Premium glassmorphism chat UI. Theme-aware: a deep-black luxury palette in
+// dark mode, a clean light variant in light mode. All messaging logic
+// (sockets, pagination, read receipts, media, delete) is unchanged — only the
+// presentation layer was redesigned.
+//
 // Keyboard handling — the working setup:
 //
 //   • Android: relies on `softwareKeyboardLayoutMode: "resize"` in app.json
@@ -22,11 +27,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, Image, TextInput,
-  StyleSheet, Platform, ActivityIndicator, Alert,
-  Keyboard, KeyboardAvoidingView, useWindowDimensions,
+  StyleSheet, Platform, ActivityIndicator, Alert, StatusBar,
+  Keyboard, KeyboardAvoidingView, useWindowDimensions, Animated, Easing,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth }     from '../context/AuthContext';
 import { useTheme }    from '../context/ThemeContext';
@@ -128,6 +135,58 @@ function useAndroidKeyboardPadding(safeBottom) {
   return { bottomPad, onHostLayout, onInputFocus, onInputBlur };
 }
 
+// ─── Premium chat palette (theme-aware) ──────────────────────────────────────
+// Dark = deep-black luxury glassmorphism; light = clean frosted variant.
+const chatTheme = (isDark) => isDark ? {
+  base:        '#050505',
+  bgGradient:  ['#050505', '#0A0A0A', '#050505'],
+  glow:        '59,130,246',                 // rgb for the ambient blue halo
+  glassTint:   'dark',
+  headerBg:    'rgba(10,10,10,0.55)',
+  surface:     'rgba(255,255,255,0.05)',
+  border:      'rgba(255,255,255,0.08)',
+  textPrimary: '#FFFFFF',
+  textSecondary:'rgba(255,255,255,0.65)',
+  textDim:     'rgba(255,255,255,0.40)',
+  theirsBubble:'rgba(255,255,255,0.06)',
+  theirsText:  '#FFFFFF',
+  theirsTime:  'rgba(255,255,255,0.40)',
+  mineGrad:    ['#3B82F6', '#2563EB'],
+  mineText:    '#FFFFFF',
+  mineTime:    'rgba(255,255,255,0.70)',
+  composerBg:  'rgba(20,20,22,0.55)',
+  inputBg:     'rgba(255,255,255,0.06)',
+  sendGrad:    ['#3B82F6', '#2563EB'],
+  online:      '#22C55E',
+  accent:      '#3B82F6',
+  dateBadge:   'rgba(255,255,255,0.07)',
+  statusBar:   'light-content',
+} : {
+  base:        '#FFFFFF',
+  bgGradient:  ['#FFFFFF', '#F4F7FB', '#FFFFFF'],
+  glow:        '59,130,246',
+  glassTint:   'light',
+  headerBg:    'rgba(255,255,255,0.6)',
+  surface:     'rgba(15,23,42,0.04)',
+  border:      'rgba(15,23,42,0.08)',
+  textPrimary: '#0F172A',
+  textSecondary:'#64748B',
+  textDim:     '#94A3B8',
+  theirsBubble:'#FFFFFF',
+  theirsText:  '#0F172A',
+  theirsTime:  '#94A3B8',
+  mineGrad:    ['#3B82F6', '#2563EB'],
+  mineText:    '#FFFFFF',
+  mineTime:    'rgba(255,255,255,0.75)',
+  composerBg:  'rgba(255,255,255,0.6)',
+  inputBg:     'rgba(15,23,42,0.05)',
+  sendGrad:    ['#3B82F6', '#2563EB'],
+  online:      '#22C55E',
+  accent:      '#3B82F6',
+  dateBadge:   'rgba(15,23,42,0.06)',
+  statusBar:   'dark-content',
+};
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const formatTime = (d) => d ? new Date(d).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
 const formatDate = (d) => {
@@ -154,16 +213,66 @@ const formatLastSeen = (d) => {
   return `Last seen ${new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
 };
 
+// ─── Avatar ──────────────────────────────────────────────────────────────────
+// Circular avatar placeholder — image when available, gradient + initials fallback.
+const Avatar = ({ uri, name, size = 40, ct }) => {
+  if (uri) return <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2 }} />;
+  return (
+    <LinearGradient
+      colors={['#3B82F6', '#2563EB']}
+      style={{ width: size, height: size, borderRadius: size / 2, alignItems: 'center', justifyContent: 'center' }}
+    >
+      <Text style={{ color: '#fff', fontWeight: '700', fontSize: size * 0.36 }}>{ini(name)}</Text>
+    </LinearGradient>
+  );
+};
+
+// ─── Animated typing dots ────────────────────────────────────────────────────
+function TypingDots({ color }) {
+  const d1 = useRef(new Animated.Value(0)).current;
+  const d2 = useRef(new Animated.Value(0)).current;
+  const d3 = useRef(new Animated.Value(0)).current;
+  const dots = [d1, d2, d3];
+
+  useEffect(() => {
+    const make = (v, delay) => Animated.loop(
+      Animated.sequence([
+        Animated.timing(v, { toValue: 1, duration: 380, delay, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(v, { toValue: 0, duration: 380, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.delay(220),
+      ])
+    );
+    const anims = dots.map((v, i) => make(v, i * 150));
+    anims.forEach(a => a.start());
+    return () => anims.forEach(a => a.stop());
+  }, []);
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {dots.map((v, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            width: 7, height: 7, borderRadius: 4, marginHorizontal: 2.5, backgroundColor: color,
+            opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
+            transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) }],
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 // ─── Video Card ──────────────────────────────────────────────────────────────
-const VideoCard = ({ video, onPress, isMine }) => {
+const VideoCard = ({ video, onPress, isMine, ct }) => {
   if (!video) return null;
   return (
-    <TouchableOpacity style={S.vidCard} activeOpacity={0.8} onPress={onPress}>
-      <Image source={{ uri: video.thumbnailUrl || 'https://via.placeholder.com/200x120/1e293b/94a3b8?text=Video' }} style={S.vidThumb} />
+    <TouchableOpacity style={S.vidCard} activeOpacity={0.85} onPress={onPress}>
+      <Image source={{ uri: video.thumbnailUrl || 'https://via.placeholder.com/200x120/0a0a0a/3b82f6?text=Video' }} style={S.vidThumb} />
       <View style={S.vidPlay}><Ionicons name="play" size={18} color="#fff" /></View>
-      <View style={[S.vidMeta, isMine ? S.vidMetaMine : S.vidMetaOther]}>
-        <Text style={[S.vidTitle, isMine && { color: 'rgba(255,255,255,0.9)' }]} numberOfLines={2}>{video.title || 'Video'}</Text>
-        {video.duration > 0 && <Text style={[S.vidDur, isMine && { color: 'rgba(255,255,255,0.5)' }]}>{Math.round(video.duration)}s</Text>}
+      <View style={[S.vidMeta, { backgroundColor: isMine ? 'rgba(255,255,255,0.12)' : ct.surface }]}>
+        <Text style={[S.vidTitle, { color: isMine ? 'rgba(255,255,255,0.95)' : ct.textPrimary }]} numberOfLines={2}>{video.title || 'Video'}</Text>
+        {video.duration > 0 && <Text style={[S.vidDur, { color: isMine ? 'rgba(255,255,255,0.6)' : ct.textSecondary }]}>{Math.round(video.duration)}s</Text>}
       </View>
     </TouchableOpacity>
   );
@@ -176,82 +285,85 @@ const deriveStatus = (msg) => {
   return 'sent';
 };
 
+// Read-receipt ticks (sent / delivered / seen)
 const StatusTick = ({ status }) => {
   if (status === 'seen') {
-    return <Ionicons name="checkmark-done" size={14} color="#38bdf8" style={{ marginLeft: 4 }} />;
+    return <Ionicons name="checkmark-done" size={14} color="#BAE6FD" style={{ marginLeft: 4 }} />;
   }
   if (status === 'delivered') {
-    return <Ionicons name="checkmark-done" size={14} color="rgba(255,255,255,0.55)" style={{ marginLeft: 4 }} />;
+    return <Ionicons name="checkmark-done" size={14} color="rgba(255,255,255,0.7)" style={{ marginLeft: 4 }} />;
   }
-  return <Ionicons name="checkmark" size={14} color="rgba(255,255,255,0.55)" style={{ marginLeft: 4 }} />;
+  return <Ionicons name="checkmark" size={14} color="rgba(255,255,255,0.7)" style={{ marginLeft: 4 }} />;
 };
 
 // ─── Message Bubble ──────────────────────────────────────────────────────────
-// Bubble palette per theme:
-//   Mine (sent)     — accent color in both modes (blue→a brighter blue in dark)
-//   Theirs (received)— light gray on light, dark surface on dark
-const bubblePalette = (colors, isDark) => ({
-  mineBg:    colors.accent,
-  theirsBg:  isDark ? '#1f1f24' : '#ffffff',
-  mineText:  '#ffffff',
-  theirsText: colors.text,
-  mineTime:  'rgba(255,255,255,0.6)',
-  theirsTime: colors.textDim,
-  dateBadgeBg: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(100,116,139,0.1)',
-  dateBadgeText: colors.textMuted,
-  deletedText: colors.textDim,
-});
+//   Mine (sent)      — blue gradient bubble, right aligned, read receipt.
+//   Theirs (received)— translucent glass bubble with avatar, left aligned.
+const MessageBubble = ({ msg, isMine, showDate, navigation, ct, otherUser }) => {
+  const textColor = isMine ? ct.mineText : ct.theirsText;
+  const timeColor = isMine ? ct.mineTime : ct.theirsTime;
+  const isMedia   = msg.type === 'video' || msg.type === 'image';
 
-const MessageBubble = ({ msg, isMine, showDate, navigation, palette }) => (
-  <View>
-    {showDate && (
-      <View style={[S.dateBadge, { backgroundColor: palette.dateBadgeBg }]}>
-        <Text style={[S.dateText, { color: palette.dateBadgeText }]}>{formatDate(msg.createdAt)}</Text>
-      </View>
-    )}
-    <View style={[S.bRow, isMine ? S.bRight : S.bLeft]}>
-      <View style={[
-        S.bubble,
-        isMine
-          ? [S.bMineLayout, { backgroundColor: palette.mineBg, shadowColor: palette.mineBg }]
-          : [S.bTheirsLayout, { backgroundColor: palette.theirsBg }],
-        (msg.type === 'video' || msg.type === 'image') && S.bMedia,
-      ]}>
-        {msg.deleted ? (
-          <View style={S.delRow}>
-            <Ionicons name="ban-outline" size={13} color={palette.deletedText} />
-            <Text style={[S.delText, { color: palette.deletedText }]}>This message was deleted</Text>
-          </View>
-        ) : (
-          <>
-            {msg.type === 'video' && msg.videoId && (
-              <VideoCard video={msg.videoId} isMine={isMine} onPress={() => navigation.navigate('VideoPlayer', { videoId: msg.videoId._id || msg.videoId })} />
-            )}
-            {msg.type === 'image' && msg.imageUrl && <Image source={{ uri: msg.imageUrl }} style={S.imgMsg} resizeMode="cover" />}
-            {msg.text ? (
-              <Text style={[S.msgText, { color: isMine ? palette.mineText : palette.theirsText }]}>
-                {msg.text}
-              </Text>
-            ) : null}
-          </>
-        )}
-        <View style={S.msgFoot}>
-          <Text style={[S.msgTime, { color: isMine ? palette.mineTime : palette.theirsTime }]}>
-            {formatTime(msg.createdAt)}
-          </Text>
-          {isMine && !msg.deleted && <StatusTick status={deriveStatus(msg)} />}
+  const inner = (
+    <>
+      {msg.deleted ? (
+        <View style={S.delRow}>
+          <Ionicons name="ban-outline" size={13} color={timeColor} />
+          <Text style={[S.delText, { color: timeColor }]}>This message was deleted</Text>
         </View>
+      ) : (
+        <>
+          {msg.type === 'video' && msg.videoId && (
+            <VideoCard video={msg.videoId} isMine={isMine} ct={ct}
+              onPress={() => navigation.navigate('VideoPlayer', { videoId: msg.videoId._id || msg.videoId })} />
+          )}
+          {msg.type === 'image' && msg.imageUrl && <Image source={{ uri: msg.imageUrl }} style={S.imgMsg} resizeMode="cover" />}
+          {msg.text ? <Text style={[S.msgText, { color: textColor }]}>{msg.text}</Text> : null}
+        </>
+      )}
+      <View style={S.msgFoot}>
+        <Text style={[S.msgTime, { color: timeColor }]}>{formatTime(msg.createdAt)}</Text>
+        {isMine && !msg.deleted && <StatusTick status={deriveStatus(msg)} />}
+      </View>
+    </>
+  );
+
+  return (
+    <View>
+      {showDate && (
+        <View style={S.dateBadgeWrap}>
+          <Text style={[S.dateText, { backgroundColor: ct.dateBadge, color: ct.textSecondary }]}>{formatDate(msg.createdAt)}</Text>
+        </View>
+      )}
+      <View style={[S.bRow, isMine ? S.bRight : S.bLeft]}>
+        {!isMine && (
+          <View style={S.bAvatar}>
+            <Avatar uri={otherUser?.profileImage} name={otherUser?.fullName || otherUser?.username} size={28} ct={ct} />
+          </View>
+        )}
+        {isMine ? (
+          <LinearGradient
+            colors={ct.mineGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+            style={[S.bubble, S.bMine, S.bMineShadow, isMedia && S.bMedia]}
+          >
+            {inner}
+          </LinearGradient>
+        ) : (
+          <View style={[S.bubble, S.bTheirs, { backgroundColor: ct.theirsBubble, borderColor: ct.border }, isMedia && S.bMedia]}>
+            {inner}
+          </View>
+        )}
       </View>
     </View>
-  </View>
-);
+  );
+};
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 export default function ChatConversationScreen({ route, navigation }) {
   const { chatId, otherUser } = route.params;
   const { user: me }          = useAuth();
-  const { colors, isDark }    = useTheme();
-  const palette               = bubblePalette(colors, isDark);
+  const { isDark }            = useTheme();
+  const ct                    = chatTheme(isDark);
   const insets                = useSafeAreaInsets();
   const kb                    = useAndroidKeyboardPadding(insets.bottom);
 
@@ -396,10 +508,15 @@ export default function ChatConversationScreen({ route, navigation }) {
     ]);
   };
 
+  const startCall = (kind) =>
+    Alert.alert(`${kind} call`, `${kind} calling will be available soon.`);
+
   const shouldShowDate = (msg, idx) => {
     if (idx === messages.length - 1) return true;
     return new Date(msg.createdAt).toDateString() !== new Date(messages[idx + 1].createdAt).toDateString();
   };
+
+  const canSend = !!text.trim() && !sending;
 
   // ══════════════════════════════════════════════════════════════════════════
   // iOS: KeyboardAvoidingView with behavior="padding" pushes the composer up.
@@ -407,215 +524,274 @@ export default function ChatConversationScreen({ route, navigation }) {
   // applies bottom padding via the `host` View — needed because Samsung One UI
   // on RN 0.81 + new arch ignores softwareKeyboardLayoutMode="resize".
   return (
-    <SafeAreaView
-      style={[S.root, { backgroundColor: colors.surface }]}
-      edges={Platform.OS === 'ios' ? ['top', 'bottom'] : ['top']}
-    >
-      <KeyboardAvoidingView
+    <View style={[S.shell, { backgroundColor: ct.base }]}>
+      {/* Deep gradient canvas + soft blue ambient glow behind the header */}
+      <LinearGradient colors={ct.bgGradient} style={StyleSheet.absoluteFill} />
+      <View pointerEvents="none" style={S.glowWrap}>
+        <View style={[S.glow, { width: 460, height: 460, borderRadius: 230, backgroundColor: `rgba(${ct.glow},0.05)` }]} />
+        <View style={[S.glow, { width: 320, height: 320, borderRadius: 160, backgroundColor: `rgba(${ct.glow},0.07)` }]} />
+        <View style={[S.glow, { width: 200, height: 200, borderRadius: 100, backgroundColor: `rgba(${ct.glow},0.09)` }]} />
+      </View>
+
+      <StatusBar barStyle={ct.statusBar} backgroundColor="transparent" translucent />
+
+      <SafeAreaView
         style={S.root}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
+        edges={Platform.OS === 'ios' ? ['top', 'bottom'] : ['top']}
       >
-      <View
-        style={[S.root, { paddingBottom: kb.bottomPad }]}
-        onLayout={kb.onHostLayout}
-      >
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <View style={[S.header, { backgroundColor: colors.bg, borderBottomColor: colors.divider }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={S.backBtn}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <Ionicons name="chevron-back" size={26} color={colors.text} />
-        </TouchableOpacity>
-        {otherUser?.profileImage
-          ? <Image source={{ uri: otherUser.profileImage }} style={S.hAvatar} />
-          : <View style={[S.hAvatar, S.hAvatarFb]}><Text style={S.hIni}>{ini(otherUser?.fullName)}</Text></View>}
-        <View style={S.hInfo}>
-          <Text style={[S.hName, { color: colors.text }]} numberOfLines={1}>{otherUser?.username || 'User'}</Text>
-          {typing ? (
-            <View style={S.hStatusRow}>
-              <Text style={[S.hStatus, S.hTyping, { color: colors.accent }]}>typing...</Text>
-            </View>
-          ) : isOnline ? (
-            <View style={S.hStatusRow}>
-              <View style={S.hOnline} />
-              <Text style={S.hStatus}>Online</Text>
-            </View>
-          ) : lastSeen ? (
-            <View style={S.hStatusRow}>
-              <Text style={[S.hLastSeen, { color: colors.textMuted }]}>{formatLastSeen(lastSeen)}</Text>
-            </View>
-          ) : null}
-        </View>
-      </View>
+        <KeyboardAvoidingView
+          style={S.root}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={0}
+        >
+        <View style={[S.root, { paddingBottom: kb.bottomPad }]} onLayout={kb.onHostLayout}>
 
-      {/* ── Messages ────────────────────────────────────────────────────── */}
-      {loading ? (
-        <View style={S.center}><ActivityIndicator size="large" color={colors.accent} /></View>
-      ) : (
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          keyExtractor={item => item._id}
-          inverted
-          style={S.list}
-          renderItem={({ item, index }) => (
-            <TouchableOpacity activeOpacity={0.9} onLongPress={() => handleLongPress(item)} delayLongPress={500}>
-              <MessageBubble msg={item} isMine={(item.senderId?._id || item.senderId) === me?._id}
-                showDate={shouldShowDate(item, index)} navigation={navigation} palette={palette} />
+          {/* ── Header (glass, sticky) ─────────────────────────────────────── */}
+          <BlurView intensity={isDark ? 40 : 60} tint={ct.glassTint}
+            style={[S.header, { backgroundColor: ct.headerBg, borderBottomColor: ct.border }]}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={S.iconBtn}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <Ionicons name="chevron-back" size={26} color={ct.textPrimary} />
             </TouchableOpacity>
-          )}
-          contentContainerStyle={S.listPad}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          onEndReached={() => { if (hasMore && !loadingMore) loadMessages(page + 1, true); }}
-          onEndReachedThreshold={0.4}
-          ListFooterComponent={loadingMore ? <ActivityIndicator style={{ padding: 14 }} color={colors.textMuted} /> : null}
-          ListEmptyComponent={
-            <View style={S.emptyWrap}>
-              <View style={[S.emptyCircle, { backgroundColor: isDark ? 'rgba(96,165,250,0.15)' : '#eff6ff' }]}>
-                <Ionicons name="chatbubbles-outline" size={44} color={colors.accent} />
-              </View>
-              <Text style={[S.emptyTitle, { color: colors.text }]}>No messages yet</Text>
-              <Text style={[S.emptySub, { color: colors.textMuted }]}>
-                Say hello to {otherUser?.username || 'this user'}!
-              </Text>
+
+            <View style={S.hAvatarWrap}>
+              <Avatar uri={otherUser?.profileImage} name={otherUser?.fullName || otherUser?.username} size={42} ct={ct} />
+              {/* Online/offline indicator dot */}
+              <View style={[S.presenceDot, {
+                backgroundColor: isOnline ? ct.online : ct.textDim,
+                borderColor: ct.base,
+              }]} />
             </View>
-          }
-        />
-      )}
 
-      {/* ── Typing indicator ────────────────────────────────────────────── */}
-      {typing && (
-        <View style={S.typingBar}>
-          <View style={S.dots}><View style={[S.dot, { backgroundColor: colors.textMuted }]} /><View style={[S.dot, { opacity: 0.6, backgroundColor: colors.textMuted }]} /><View style={[S.dot, { backgroundColor: colors.textMuted }]} /></View>
-          <Text style={[S.typingLabel, { color: colors.textMuted }]}>{otherUser?.username} is typing</Text>
+            <View style={S.hInfo}>
+              <Text style={[S.hName, { color: ct.textPrimary }]} numberOfLines={1}>
+                {otherUser?.username || 'User'}
+              </Text>
+              {typing ? (
+                <Text style={[S.hStatus, { color: ct.accent }]}>typing…</Text>
+              ) : isOnline ? (
+                <Text style={[S.hStatus, { color: ct.online }]}>Online</Text>
+              ) : lastSeen ? (
+                <Text style={[S.hStatus, { color: ct.textSecondary }]}>{formatLastSeen(lastSeen)}</Text>
+              ) : null}
+            </View>
+
+            {/* Voice + video call actions */}
+            <TouchableOpacity onPress={() => startCall('Voice')} style={S.callBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}>
+              <Ionicons name="call-outline" size={21} color={ct.textPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => startCall('Video')} style={S.callBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}>
+              <Ionicons name="videocam-outline" size={23} color={ct.textPrimary} />
+            </TouchableOpacity>
+          </BlurView>
+
+          {/* ── Messages ───────────────────────────────────────────────────── */}
+          {loading ? (
+            <View style={S.center}><ActivityIndicator size="large" color={ct.accent} /></View>
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={item => item._id}
+              inverted
+              style={S.list}
+              renderItem={({ item, index }) => (
+                <TouchableOpacity activeOpacity={0.9} onLongPress={() => handleLongPress(item)} delayLongPress={500}>
+                  <MessageBubble
+                    msg={item}
+                    isMine={(item.senderId?._id || item.senderId) === me?._id}
+                    showDate={shouldShowDate(item, index)}
+                    navigation={navigation}
+                    ct={ct}
+                    otherUser={otherUser}
+                  />
+                </TouchableOpacity>
+              )}
+              contentContainerStyle={S.listPad}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              onEndReached={() => { if (hasMore && !loadingMore) loadMessages(page + 1, true); }}
+              onEndReachedThreshold={0.4}
+              ListFooterComponent={loadingMore ? <ActivityIndicator style={{ padding: 14 }} color={ct.textSecondary} /> : null}
+              ListEmptyComponent={
+                <View style={S.emptyWrap}>
+                  <View style={[S.emptyCircle, { backgroundColor: ct.surface, borderColor: ct.border }]}>
+                    <Ionicons name="chatbubbles-outline" size={42} color={ct.accent} />
+                  </View>
+                  <Text style={[S.emptyTitle, { color: ct.textPrimary }]}>No messages yet</Text>
+                  <Text style={[S.emptySub, { color: ct.textSecondary }]}>
+                    Say hello to {otherUser?.username || 'this user'}!
+                  </Text>
+                </View>
+              }
+            />
+          )}
+
+          {/* ── Typing indicator (avatar + glass bubble + animated dots) ────── */}
+          {typing && (
+            <View style={S.typingRow}>
+              <Avatar uri={otherUser?.profileImage} name={otherUser?.fullName || otherUser?.username} size={26} ct={ct} />
+              <View style={[S.typingBubble, { backgroundColor: ct.theirsBubble, borderColor: ct.border }]}>
+                <TypingDots color={ct.textSecondary} />
+              </View>
+            </View>
+          )}
+
+          {/* ── Composer (floating glass) ──────────────────────────────────── */}
+          <View style={S.composerWrap}>
+            <BlurView intensity={isDark ? 40 : 60} tint={ct.glassTint}
+              style={[S.composer, { backgroundColor: ct.composerBg, borderColor: ct.border }]}>
+              {/* Camera button */}
+              <TouchableOpacity onPress={showAttachMenu}
+                style={[S.circleBtn, { backgroundColor: ct.surface, borderColor: ct.border }]}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="camera-outline" size={21} color={ct.textSecondary} />
+              </TouchableOpacity>
+
+              {/* Text field */}
+              <View style={[S.inputWrap, { backgroundColor: ct.inputBg }]}>
+                <TextInput
+                  style={[S.textInput, { color: ct.textPrimary }]}
+                  placeholder="Message…"
+                  placeholderTextColor={ct.textDim}
+                  value={text}
+                  onChangeText={handleTextChange}
+                  onFocus={kb.onInputFocus}
+                  onBlur={kb.onInputBlur}
+                  multiline
+                  maxLength={5000}
+                  textAlignVertical="center"
+                />
+              </View>
+
+              {/* Send button */}
+              <TouchableOpacity onPress={sendTextMessage} disabled={!canSend}
+                activeOpacity={0.85} style={S.sendTouch}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                {canSend ? (
+                  <LinearGradient colors={ct.sendGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[S.circleBtn, S.sendOn]}>
+                    {sending
+                      ? <ActivityIndicator size={16} color="#fff" />
+                      : <Ionicons name="send" size={18} color="#fff" />}
+                  </LinearGradient>
+                ) : (
+                  <View style={[S.circleBtn, { backgroundColor: ct.surface, borderColor: ct.border }]}>
+                    {sending
+                      ? <ActivityIndicator size={16} color={ct.textDim} />
+                      : <Ionicons name="send" size={18} color={ct.textDim} />}
+                  </View>
+                )}
+              </TouchableOpacity>
+            </BlurView>
+          </View>
+
         </View>
-      )}
-
-      {/* ── Composer ────────────────────────────────────────────────────── */}
-      <View style={[S.composer, { backgroundColor: colors.bg, borderTopColor: colors.divider }]}>
-        <TouchableOpacity onPress={showAttachMenu} style={S.attachBtn}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <Ionicons name="add-circle" size={32} color={colors.accent} />
-        </TouchableOpacity>
-
-        <View style={[S.inputWrap, { backgroundColor: colors.iconChipBg, borderColor: colors.divider }]}>
-          <TextInput
-            style={[S.textInput, { color: colors.text }]}
-            placeholder="Message..."
-            placeholderTextColor={colors.textDim}
-            value={text}
-            onChangeText={handleTextChange}
-            onFocus={kb.onInputFocus}
-            onBlur={kb.onInputBlur}
-            multiline
-            maxLength={5000}
-            textAlignVertical="center"
-          />
-        </View>
-
-        <TouchableOpacity onPress={sendTextMessage} disabled={!text.trim() || sending}
-          style={[S.sendBtn, { backgroundColor: text.trim() ? colors.accent : colors.divider }]}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          {sending
-            ? <ActivityIndicator size={16} color="#fff" />
-            : <Ionicons name="send" size={18} color={text.trim() ? '#fff' : colors.textDim} />}
-        </TouchableOpacity>
-      </View>
-      </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
-  root:   { flex: 1 },                         // backgroundColor injected from theme
+  shell:  { flex: 1 },
+  root:   { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
+  // Ambient blue glow, anchored just under the status bar / header.
+  glowWrap: { position: 'absolute', top: -160, left: 0, right: 0, alignItems: 'center', justifyContent: 'center', height: 460 },
+  glow:     { position: 'absolute' },
+
+  // ── Header ──
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 10, paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,  // backgroundColor + borderBottomColor injected from theme
-    elevation: 3, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn:    { paddingRight: 6 },
-  hAvatar:    { width: 42, height: 42, borderRadius: 21, backgroundColor: '#e2e8f0' },
-  hAvatarFb:  { alignItems: 'center', justifyContent: 'center', backgroundColor: '#3b82f6' },
-  hIni:       { color: '#fff', fontWeight: '800', fontSize: 15 },
-  hInfo:      { marginLeft: 12, flex: 1 },
-  hName:      { fontSize: 17, fontWeight: '700', color: '#0f172a' },
-  hStatusRow: { flexDirection: 'row', alignItems: 'center', marginTop: 1 },
-  hOnline:    { width: 7, height: 7, borderRadius: 4, backgroundColor: '#22c55e', marginRight: 5 },
-  hStatus:    { fontSize: 12, color: '#22c55e', fontWeight: '500' },
-  hLastSeen:  { fontSize: 12, color: '#94a3b8', fontWeight: '500' },
-  hTyping:    { color: '#3b82f6', fontStyle: 'italic' },
+  iconBtn:     { paddingRight: 4 },
+  hAvatarWrap: { width: 42, height: 42, marginLeft: 4 },
+  presenceDot: {
+    position: 'absolute', right: -1, bottom: -1,
+    width: 12, height: 12, borderRadius: 6, borderWidth: 2,
+  },
+  hInfo:    { marginLeft: 12, flex: 1 },
+  hName:    { fontSize: 16.5, fontWeight: '700', letterSpacing: 0.2 },
+  hStatus:  { fontSize: 12, fontWeight: '500', marginTop: 2 },
+  callBtn:  { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
 
+  // ── Messages ──
   list:    { flex: 1 },
-  listPad: { paddingHorizontal: 14, paddingVertical: 10 },
+  listPad: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8 },
 
-  dateBadge: { alignItems: 'center', marginVertical: 14 },
-  dateText:  { backgroundColor: 'rgba(100,116,139,0.1)', color: '#64748b', fontSize: 12, fontWeight: '600', paddingHorizontal: 14, paddingVertical: 5, borderRadius: 12, overflow: 'hidden' },
+  dateBadgeWrap: { alignItems: 'center', marginVertical: 16 },
+  dateText:      { fontSize: 11.5, fontWeight: '600', paddingHorizontal: 14, paddingVertical: 5, borderRadius: 12, overflow: 'hidden' },
 
-  bRow:     { marginBottom: 5 },
-  bLeft:    { alignItems: 'flex-start' },
-  bRight:   { alignItems: 'flex-end' },
-  bubble:   { maxWidth: '80%', borderRadius: 20, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 },
-  // Layout-only bubble styles. Colours come from `bubblePalette(theme)` at runtime.
-  bMineLayout:   { borderBottomRightRadius: 6, elevation: 1, shadowOpacity: 0.2, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
-  bTheirsLayout: { borderBottomLeftRadius: 6,  elevation: 1, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
-  bMedia:   { paddingHorizontal: 5, paddingTop: 5 },
-  msgText:  { fontSize: 15, lineHeight: 22 },
-  txtMine:  { color: '#fff' },
-  txtOther: { color: '#0f172a' },
-  delRow:   { flexDirection: 'row', alignItems: 'center' },
-  delText:  { fontStyle: 'italic', color: '#94a3b8', fontSize: 13, marginLeft: 5 },
-  msgFoot:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 3 },
-  msgTime:  { fontSize: 10.5, color: '#94a3b8' },
-  timeMine: { color: 'rgba(255,255,255,0.5)' },
+  bRow:    { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 8 },
+  bLeft:   { justifyContent: 'flex-start' },
+  bRight:  { justifyContent: 'flex-end' },
+  bAvatar: { marginRight: 8, marginBottom: 2 },
 
-  vidCard:      { borderRadius: 12, overflow: 'hidden', marginBottom: 4, width: 210 },
-  vidThumb:     { width: 210, height: 125, backgroundColor: '#1e293b' },
-  vidPlay:      { position: 'absolute', top: 44, left: 88, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
-  vidMeta:      { paddingHorizontal: 10, paddingVertical: 6 },
-  vidMetaMine:  { backgroundColor: 'rgba(255,255,255,0.1)' },
-  vidMetaOther: { backgroundColor: '#f8fafc' },
-  vidTitle:     { fontSize: 13, fontWeight: '600', color: '#0f172a' },
-  vidDur:       { fontSize: 11, color: '#64748b', marginTop: 2 },
-  imgMsg:       { width: 210, height: 210, borderRadius: 12, marginBottom: 4 },
+  bubble:  { maxWidth: '75%', borderRadius: 22, paddingHorizontal: 15, paddingTop: 10, paddingBottom: 7 },
+  bMine:   { borderBottomRightRadius: 7 },
+  bTheirs: { borderBottomLeftRadius: 7, borderWidth: 1 },
+  bMineShadow: {
+    shadowColor: '#2563EB', shadowOpacity: 0.35, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4,
+  },
+  bMedia:  { paddingHorizontal: 6, paddingTop: 6 },
 
-  emptyWrap:   { alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] },
-  emptyCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#eff6ff', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
-  emptyTitle:  { fontSize: 18, fontWeight: '700', color: '#334155' },
-  emptySub:    { fontSize: 14, color: '#94a3b8', marginTop: 5 },
+  msgText: { fontSize: 15, lineHeight: 22 },
+  delRow:  { flexDirection: 'row', alignItems: 'center' },
+  delText: { fontStyle: 'italic', fontSize: 13, marginLeft: 5 },
+  msgFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 3 },
+  msgTime: { fontSize: 10.5 },
 
-  typingBar:   { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 5 },
-  dots:        { flexDirection: 'row', marginRight: 8 },
-  dot:         { width: 5, height: 5, borderRadius: 3, backgroundColor: '#94a3b8', marginHorizontal: 1 },
-  typingLabel: { fontSize: 12, color: '#64748b', fontStyle: 'italic' },
+  // ── Media inside bubbles ──
+  vidCard:  { borderRadius: 14, overflow: 'hidden', marginBottom: 4, width: 212 },
+  vidThumb: { width: 212, height: 126, backgroundColor: '#0a0a0a' },
+  vidPlay:  { position: 'absolute', top: 46, left: 89, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
+  vidMeta:  { paddingHorizontal: 10, paddingVertical: 7 },
+  vidTitle: { fontSize: 13, fontWeight: '600' },
+  vidDur:   { fontSize: 11, marginTop: 2 },
+  imgMsg:   { width: 212, height: 212, borderRadius: 14, marginBottom: 4 },
 
+  // ── Empty state (list is inverted, so flip it back upright) ──
+  emptyWrap:   { alignItems: 'center', paddingVertical: 64, transform: [{ scaleY: -1 }] },
+  emptyCircle: { width: 84, height: 84, borderRadius: 42, alignItems: 'center', justifyContent: 'center', marginBottom: 16, borderWidth: 1 },
+  emptyTitle:  { fontSize: 18, fontWeight: '700' },
+  emptySub:    { fontSize: 14, marginTop: 6 },
+
+  // ── Typing indicator ──
+  typingRow:    { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 6 },
+  typingBubble: { marginLeft: 8, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 18, borderBottomLeftRadius: 6, borderWidth: 1 },
+
+  // ── Composer (floating glass) ──
+  composerWrap: {
+    paddingHorizontal: 12, paddingTop: 6, paddingBottom: 8,
+  },
   composer: {
     flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: 10, paddingTop: 8, paddingBottom: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,  // bg + borderTopColor injected from theme
+    paddingHorizontal: 8, paddingVertical: 8,
+    borderRadius: 30, borderWidth: 1, overflow: 'hidden',
+    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 8,
   },
-  attachBtn: { justifyContent: 'center', paddingBottom: 4, marginRight: 2 },
+  circleBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1,
+  },
   inputWrap: {
-    flex: 1, borderRadius: 24,
-    marginHorizontal: 6, borderWidth: 1,        // bg + borderColor injected from theme
+    flex: 1, borderRadius: 22, marginHorizontal: 8,
+    minHeight: 44, justifyContent: 'center',
   },
   textInput: {
-    paddingHorizontal: 18, paddingTop: 10, paddingBottom: 10,
-    fontSize: 15, maxHeight: 120, minHeight: 44, // color injected from theme
+    paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11,
+    fontSize: 15, maxHeight: 120, minHeight: 44,
   },
-  sendBtn: {
-    width: 42, height: 42, borderRadius: 21,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 2,                            // bg injected from theme based on text empty/non-empty
-  },
+  sendTouch: {},
   sendOn: {
-    backgroundColor: '#3b82f6', elevation: 3,
-    shadowColor: '#3b82f6', shadowOpacity: 0.35, shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
+    borderWidth: 0,
+    shadowColor: '#2563EB', shadowOpacity: 0.45, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6,
   },
 });

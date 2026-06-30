@@ -176,10 +176,10 @@ export default function VerifyEmailScreen({ route, navigation }) {
 
   return (
     <LinearGradient
-      colors={['#0f172a', '#1e293b', '#334155']}
+      colors={['#FFFFFF', '#F8FAFC', '#FFFFFF']}
       style={{ flex: 1 }}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -195,33 +195,36 @@ export default function VerifyEmailScreen({ route, navigation }) {
             className="mb-6"
             disabled={loading}
           >
-            <Ionicons name="arrow-back" size={24} color="#fff" />
+            <Ionicons name="arrow-back" size={24} color="#0F172A" />
           </TouchableOpacity>
 
           {/* Header */}
           <View className="items-center mb-12">
             <Animated.View
-              style={{ transform: [{ scale: pulseAnim }] }}
-              className="w-24 h-24 bg-blue-500 rounded-full items-center justify-center mb-6"
+              style={{
+                transform: [{ scale: pulseAnim }],
+                backgroundColor: 'rgba(212, 160, 23, 0.12)',
+              }}
+              className="w-24 h-24 rounded-full items-center justify-center mb-6"
             >
-              <Ionicons name="mail-outline" size={48} color="#fff" />
+              <Ionicons name="mail-outline" size={48} color="#D4A017" />
             </Animated.View>
-            
-            <Text className="text-3xl font-black text-white mb-3">
-              Verify Your Email
+
+            <Text style={{ fontSize: 30, fontWeight: '900', color: '#0F172A', marginBottom: 10 }}>
+              Verify Your <Text style={{ color: '#D4A017' }}>Email</Text>
             </Text>
-            <Text className="text-slate-400 text-center text-base px-8">
-              We've sent a 6-digit code to{'\n'}
-              <Text className="text-blue-400 font-semibold">{email}</Text>
+            <Text style={{ fontSize: 15, color: '#64748B', textAlign: 'center', paddingHorizontal: 32, fontWeight: '500' }}>
+              We&apos;ve sent a 6-digit code to{'\n'}
+              <Text style={{ color: '#D4A017', fontWeight: '700' }}>{email}</Text>
             </Text>
           </View>
 
           {/* OTP Input */}
           <View className="mb-8">
-            <Text className="text-slate-300 text-sm font-medium mb-4 text-center">
+            <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 16, textAlign: 'center' }}>
               Enter Verification Code
             </Text>
-            
+
             <View className="flex-row justify-center mb-6" style={{ gap: 8 }}>
               {otp.map((digit, index) => (
                 <TextInput
@@ -233,15 +236,21 @@ export default function VerifyEmailScreen({ route, navigation }) {
                   maxLength={1}
                   keyboardType="number-pad"
                   editable={!loading}
-                  className={`w-12 h-14 bg-slate-800/50 rounded-xl text-white text-2xl font-bold text-center border-2 ${
-                    digit ? 'border-blue-500' : 'border-slate-700'
-                  }`}
                   style={{
-                    shadowColor: digit ? '#3b82f6' : '#000',
+                    width: 48, height: 56,
+                    backgroundColor: '#F8FAFC',
+                    borderRadius: 12,
+                    borderWidth: 2,
+                    borderColor: digit ? '#D4A017' : 'rgba(212, 160, 23, 0.35)',
+                    color: '#0F172A',
+                    fontSize: 22,
+                    fontWeight: '700',
+                    textAlign: 'center',
+                    shadowColor: digit ? '#D4A017' : '#0F172A',
                     shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: digit ? 0.3 : 0.1,
+                    shadowOpacity: digit ? 0.25 : 0.04,
                     shadowRadius: 4,
-                    elevation: digit ? 4 : 2,
+                    elevation: digit ? 4 : 1,
                   }}
                 />
               ))}
@@ -251,16 +260,16 @@ export default function VerifyEmailScreen({ route, navigation }) {
             <View className="items-center mb-6">
               {resendLoading ? (
                 <View className="flex-row items-center">
-                  <ActivityIndicator color="#3b82f6" size="small" />
-                  <Text className="text-slate-400 text-sm ml-2">Sending code...</Text>
+                  <ActivityIndicator color="#D4A017" size="small" />
+                  <Text style={{ color: '#64748B', fontSize: 14, marginLeft: 8 }}>Sending code...</Text>
                 </View>
               ) : !canResend ? (
-                <Text className="text-slate-400 text-sm">
-                  Resend code in <Text className="text-blue-400 font-semibold">{resendTimer}s</Text>
+                <Text style={{ color: '#64748B', fontSize: 14 }}>
+                  Resend code in <Text style={{ color: '#D4A017', fontWeight: '700' }}>{resendTimer}s</Text>
                 </Text>
               ) : (
                 <TouchableOpacity onPress={handleResendOTP} disabled={loading}>
-                  <Text className="text-blue-400 text-sm font-semibold">
+                  <Text style={{ color: '#D4A017', fontSize: 14, fontWeight: '700' }}>
                     Resend Verification Code
                   </Text>
                 </TouchableOpacity>
@@ -271,38 +280,40 @@ export default function VerifyEmailScreen({ route, navigation }) {
             <TouchableOpacity
               onPress={() => handleVerify()}
               disabled={loading || otp.some(digit => digit === '')}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               <LinearGradient
                 colors={
                   loading || otp.some(digit => digit === '')
-                    ? ['#64748b', '#475569']
-                    : ['#3b82f6', '#2563eb', '#1d4ed8']
+                    ? ['#94A3B8', '#64748B']
+                    : ['#E0B028', '#D4A017', '#B8860B']
                 }
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                className="rounded-2xl py-4 items-center"
                 style={{
-                  shadowColor: '#3b82f6',
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: loading || otp.some(digit => digit === '') ? 0.1 : 0.3,
-                  shadowRadius: 8,
-                  elevation: loading || otp.some(digit => digit === '') ? 2 : 8,
+                  borderRadius: 16,
+                  paddingVertical: 16,
+                  alignItems: 'center',
+                  shadowColor: '#D4A017',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: loading || otp.some(digit => digit === '') ? 0.1 : 0.35,
+                  shadowRadius: 14,
+                  elevation: loading || otp.some(digit => digit === '') ? 2 : 10,
                 }}
               >
                 {loading ? (
                   <View className="flex-row items-center">
-                    <ActivityIndicator color="#fff" size="small" />
-                    <Text className="text-white text-base font-bold ml-2">
+                    <ActivityIndicator color="#111111" size="small" />
+                    <Text style={{ color: '#111111', fontSize: 16, fontWeight: '800', marginLeft: 10 }}>
                       Verifying...
                     </Text>
                   </View>
                 ) : (
                   <View className="flex-row items-center">
-                    <Text className="text-white text-base font-bold mr-2">
+                    <Text style={{ color: '#111111', fontSize: 16, fontWeight: '800', marginRight: 8 }}>
                       Verify Email
                     </Text>
-                    <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+                    <Ionicons name="checkmark-circle-outline" size={20} color="#111111" />
                   </View>
                 )}
               </LinearGradient>
@@ -310,14 +321,17 @@ export default function VerifyEmailScreen({ route, navigation }) {
           </View>
 
           {/* Info Box */}
-          <View className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-4">
+          <View
+            className="rounded-2xl p-4"
+            style={{ backgroundColor: 'rgba(212, 160, 23, 0.08)', borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.25)' }}
+          >
             <View className="flex-row items-start">
-              <Ionicons name="information-circle-outline" size={20} color="#60a5fa" />
+              <Ionicons name="information-circle-outline" size={20} color="#D4A017" />
               <View className="flex-1 ml-3">
-                <Text className="text-blue-400 text-sm font-semibold mb-1">
-                  Didn't receive the code?
+                <Text style={{ color: '#D4A017', fontSize: 14, fontWeight: '700', marginBottom: 4 }}>
+                  Didn&apos;t receive the code?
                 </Text>
-                <Text className="text-slate-400 text-xs leading-5">
+                <Text style={{ color: '#64748B', fontSize: 12, lineHeight: 18 }}>
                   • Check your spam/junk folder{'\n'}
                   • Make sure {email} is correct{'\n'}
                   • Wait for the timer and resend if needed{'\n'}
@@ -333,9 +347,9 @@ export default function VerifyEmailScreen({ route, navigation }) {
             className="mt-8 items-center"
             disabled={loading}
           >
-            <Text className="text-slate-400 text-sm">
+            <Text style={{ color: '#64748B', fontSize: 14 }}>
               Back to{' '}
-              <Text className="text-blue-400 font-semibold">Login</Text>
+              <Text style={{ color: '#D4A017', fontWeight: '700' }}>Login</Text>
             </Text>
           </TouchableOpacity>
         </Animated.View>

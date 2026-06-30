@@ -21,6 +21,8 @@ import { Ionicons }          from '@expo/vector-icons';
 import ActionButtons         from './ActionButtons';
 import CaptionSection        from './CaptionSection';
 import MoreSheet             from './MoreSheet';
+import InfoButton            from '../video/InfoButton';
+import VideoInfoPanel        from '../video/VideoInfoPanel';
 import videoService          from '../../services/VideoService';
 import { pickVideoUrl }      from '../../utils/videoQuality';
 import usePreferences        from '../../hooks/usePreferences';
@@ -136,6 +138,7 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   const [shares,      setShares]      = useState(item.sharesCount  ?? item.shares  ?? 0);
   const [reposts,     setReposts]     = useState(item.repostsCount ?? item.reposts ?? 0);
   const [showMore,    setShowMore]    = useState(false);
+  const [showInfo,    setShowInfo]    = useState(false);
 
   // Hydrate persisted save state for external (non-own-upload) videos
   useEffect(() => {
@@ -339,12 +342,24 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
         style={{ bottom: bottomOffset + 14 }}
       />
 
+      {/* ── Top-right info button (ⓘ) ──────────────────────────────────── */}
+      <View style={S.infoBtnWrap} pointerEvents="box-none">
+        <InfoButton onPress={() => setShowInfo(true)} />
+      </View>
+
       {/* ── Three-dot menu sheet ──────────────────────────────────────── */}
       <MoreSheet
         visible={showMore}
         item={item}
         onClose={() => setShowMore(false)}
         onHide={(it, reason) => onHide?.(it, reason)}
+      />
+
+      {/* ── Info panel (Fact / News / Opinion) ────────────────────────── */}
+      <VideoInfoPanel
+        visible={showInfo}
+        onClose={() => setShowInfo(false)}
+        video={item}
       />
     </View>
   );
@@ -358,4 +373,8 @@ const S = StyleSheet.create({
   pauseBg:      { backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 50, padding: 16 },
   progressTrack:{ position: 'absolute', left: 0, right: 0, height: 2, backgroundColor: 'rgba(255,255,255,0.2)', zIndex: 20 },
   progressFill: { height: '100%', backgroundColor: '#fff' },
+
+  // ⓘ button — top-right, safe-area-friendly (matches status-bar inset on
+  // most devices without needing useSafeAreaInsets in this component).
+  infoBtnWrap:  { position: 'absolute', top: 56, right: 14, zIndex: 25 },
 });

@@ -125,10 +125,10 @@ export default function ResetPasswordScreen({ route, navigation }) {
 
   return (
     <LinearGradient
-      colors={['#0f172a', '#1e293b', '#334155']}
+      colors={['#FFFFFF', '#F8FAFC', '#FFFFFF']}
       style={{ flex: 1 }}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -149,29 +149,32 @@ export default function ResetPasswordScreen({ route, navigation }) {
               className="mb-6"
               disabled={loading}
             >
-              <Ionicons name="arrow-back" size={24} color="#fff" />
+              <Ionicons name="arrow-back" size={24} color="#0F172A" />
             </TouchableOpacity>
 
             {/* Header */}
             <View className="items-center mb-10">
-              <View className="w-20 h-20 bg-red-500 rounded-full items-center justify-center mb-4">
-                <Ionicons name="key-outline" size={40} color="#fff" />
+              <View
+                className="w-20 h-20 rounded-full items-center justify-center mb-4"
+                style={{ backgroundColor: 'rgba(212, 160, 23, 0.12)' }}
+              >
+                <Ionicons name="key-outline" size={40} color="#D4A017" />
               </View>
-              
-              <Text className="text-3xl font-black text-white mb-2">
-                Reset Password
+
+              <Text style={{ fontSize: 30, fontWeight: '900', color: '#0F172A', marginBottom: 8 }}>
+                Reset <Text style={{ color: '#D4A017' }}>Password</Text>
               </Text>
-              <Text className="text-slate-400 text-center text-sm px-8">
+              <Text style={{ fontSize: 14, color: '#64748B', textAlign: 'center', paddingHorizontal: 32, fontWeight: '500' }}>
                 Enter the code sent to {email}
               </Text>
             </View>
 
             {/* OTP Input */}
             <View style={{ marginBottom: 24 }}>
-              <Text className="text-slate-300 text-sm font-medium mb-3 ml-1">
+              <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 12, marginLeft: 4 }}>
                 Verification Code
               </Text>
-              
+
               <View className="flex-row justify-center mb-2" style={{ gap: 8 }}>
                 {otp.map((digit, index) => (
                   <TextInput
@@ -183,27 +186,38 @@ export default function ResetPasswordScreen({ route, navigation }) {
                     maxLength={1}
                     keyboardType="number-pad"
                     editable={!loading}
-                    className={`w-12 h-14 bg-slate-800/50 rounded-xl text-white text-2xl font-bold text-center border-2 ${
-                      digit ? 'border-red-500' : 'border-slate-700'
-                    }`}
+                    style={{
+                      width: 48, height: 56,
+                      backgroundColor: '#F8FAFC',
+                      borderRadius: 12,
+                      borderWidth: 2,
+                      borderColor: digit ? '#D4A017' : 'rgba(212, 160, 23, 0.35)',
+                      color: '#0F172A',
+                      fontSize: 22,
+                      fontWeight: '700',
+                      textAlign: 'center',
+                    }}
                   />
                 ))}
               </View>
               {errors.otp && (
-                <Text className="text-red-400 text-xs mt-1 ml-1">{errors.otp}</Text>
+                <Text className="text-red-500 text-xs mt-1 ml-1">{errors.otp}</Text>
               )}
             </View>
 
             {/* New Password */}
             <View style={{ marginBottom: 16 }}>
-              <Text className="text-slate-300 text-sm font-medium mb-2 ml-1">
+              <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 8, marginLeft: 4 }}>
                 New Password
               </Text>
-              <View className="flex-row items-center bg-slate-800/50 rounded-2xl px-4 py-1 border border-slate-700">
-                <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" />
+              <View
+                className="flex-row items-center px-4 py-1"
+                style={{ backgroundColor: '#F8FAFC', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.45)' }}
+              >
+                <Ionicons name="lock-closed-outline" size={20} color="#D4A017" />
                 <TextInput
                   placeholder="Min. 8 characters"
-                  placeholderTextColor="#64748b"
+                  placeholderTextColor="#94A3B8"
                   value={newPassword}
                   onChangeText={(text) => {
                     setNewPassword(text);
@@ -211,34 +225,37 @@ export default function ResetPasswordScreen({ route, navigation }) {
                   }}
                   secureTextEntry={!showPassword}
                   editable={!loading}
-                  className="flex-1 text-white text-base px-3 py-3"
+                  style={{ flex: 1, color: '#0F172A', fontSize: 16, paddingHorizontal: 12, paddingVertical: 12 }}
                 />
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setShowPassword(!showPassword)}
                   disabled={loading}
                 >
                   <Ionicons
                     name={showPassword ? 'eye-outline' : 'eye-off-outline'}
                     size={20}
-                    color="#94a3b8"
+                    color="#64748B"
                   />
                 </TouchableOpacity>
               </View>
               {errors.newPassword && (
-                <Text className="text-red-400 text-xs mt-1 ml-1">{errors.newPassword}</Text>
+                <Text className="text-red-500 text-xs mt-1 ml-1">{errors.newPassword}</Text>
               )}
             </View>
 
             {/* Confirm Password */}
             <View style={{ marginBottom: 24 }}>
-              <Text className="text-slate-300 text-sm font-medium mb-2 ml-1">
+              <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 8, marginLeft: 4 }}>
                 Confirm Password
               </Text>
-              <View className="flex-row items-center bg-slate-800/50 rounded-2xl px-4 py-1 border border-slate-700">
-                <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" />
+              <View
+                className="flex-row items-center px-4 py-1"
+                style={{ backgroundColor: '#F8FAFC', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.45)' }}
+              >
+                <Ionicons name="lock-closed-outline" size={20} color="#D4A017" />
                 <TextInput
                   placeholder="Re-enter new password"
-                  placeholderTextColor="#64748b"
+                  placeholderTextColor="#94A3B8"
                   value={confirmPassword}
                   onChangeText={(text) => {
                     setConfirmPassword(text);
@@ -246,45 +263,48 @@ export default function ResetPasswordScreen({ route, navigation }) {
                   }}
                   secureTextEntry={!showConfirmPassword}
                   editable={!loading}
-                  className="flex-1 text-white text-base px-3 py-3"
+                  style={{ flex: 1, color: '#0F172A', fontSize: 16, paddingHorizontal: 12, paddingVertical: 12 }}
                 />
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setShowConfirmPassword(!showConfirmPassword)}
                   disabled={loading}
                 >
                   <Ionicons
                     name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
                     size={20}
-                    color="#94a3b8"
+                    color="#64748B"
                   />
                 </TouchableOpacity>
               </View>
               {errors.confirmPassword && (
-                <Text className="text-red-400 text-xs mt-1 ml-1">{errors.confirmPassword}</Text>
+                <Text className="text-red-500 text-xs mt-1 ml-1">{errors.confirmPassword}</Text>
               )}
             </View>
 
             {/* Password Requirements */}
-            <View className="bg-slate-800/30 rounded-2xl p-4 mb-6">
-              <Text className="text-slate-300 text-xs font-semibold mb-2">
+            <View
+              className="rounded-2xl p-4 mb-6"
+              style={{ backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0' }}
+            >
+              <Text style={{ color: '#334155', fontSize: 12, fontWeight: '700', marginBottom: 8 }}>
                 Password Requirements:
               </Text>
               <View className="space-y-1">
                 <View className="flex-row items-center">
-                  <Ionicons 
-                    name={newPassword.length >= 8 ? "checkmark-circle" : "ellipse-outline"} 
-                    size={14} 
-                    color={newPassword.length >= 8 ? "#10b981" : "#64748b"} 
+                  <Ionicons
+                    name={newPassword.length >= 8 ? "checkmark-circle" : "ellipse-outline"}
+                    size={14}
+                    color={newPassword.length >= 8 ? "#10b981" : "#94A3B8"}
                   />
-                  <Text className="text-slate-400 text-xs ml-2">At least 8 characters</Text>
+                  <Text style={{ color: '#64748B', fontSize: 12, marginLeft: 8 }}>At least 8 characters</Text>
                 </View>
                 <View className="flex-row items-center">
-                  <Ionicons 
-                    name={newPassword === confirmPassword && newPassword ? "checkmark-circle" : "ellipse-outline"} 
-                    size={14} 
-                    color={newPassword === confirmPassword && newPassword ? "#10b981" : "#64748b"} 
+                  <Ionicons
+                    name={newPassword === confirmPassword && newPassword ? "checkmark-circle" : "ellipse-outline"}
+                    size={14}
+                    color={newPassword === confirmPassword && newPassword ? "#10b981" : "#94A3B8"}
                   />
-                  <Text className="text-slate-400 text-xs ml-2">Passwords match</Text>
+                  <Text style={{ color: '#64748B', fontSize: 12, marginLeft: 8 }}>Passwords match</Text>
                 </View>
               </View>
             </View>
@@ -293,34 +313,36 @@ export default function ResetPasswordScreen({ route, navigation }) {
             <TouchableOpacity
               onPress={handleResetPassword}
               disabled={loading}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               <LinearGradient
-                colors={loading ? ['#64748b', '#475569'] : ['#ef4444', '#dc2626', '#b91c1c']}
+                colors={loading ? ['#94A3B8', '#64748B'] : ['#E0B028', '#D4A017', '#B8860B']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                className="rounded-2xl py-4 items-center"
                 style={{
-                  shadowColor: '#ef4444',
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: loading ? 0.1 : 0.3,
-                  shadowRadius: 8,
-                  elevation: loading ? 2 : 8,
+                  borderRadius: 16,
+                  paddingVertical: 16,
+                  alignItems: 'center',
+                  shadowColor: '#D4A017',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: loading ? 0.1 : 0.35,
+                  shadowRadius: 14,
+                  elevation: loading ? 2 : 10,
                 }}
               >
                 {loading ? (
                   <View className="flex-row items-center">
-                    <ActivityIndicator color="#fff" size="small" />
-                    <Text className="text-white text-base font-bold ml-2">
+                    <ActivityIndicator color="#111111" size="small" />
+                    <Text style={{ color: '#111111', fontSize: 16, fontWeight: '800', marginLeft: 10 }}>
                       Resetting Password...
                     </Text>
                   </View>
                 ) : (
                   <View className="flex-row items-center">
-                    <Text className="text-white text-base font-bold mr-2">
+                    <Text style={{ color: '#111111', fontSize: 16, fontWeight: '800', marginRight: 8 }}>
                       Reset Password
                     </Text>
-                    <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+                    <Ionicons name="checkmark-circle-outline" size={20} color="#111111" />
                   </View>
                 )}
               </LinearGradient>
@@ -332,9 +354,9 @@ export default function ResetPasswordScreen({ route, navigation }) {
               className="mt-6 items-center"
               disabled={loading}
             >
-              <Text className="text-slate-400 text-sm">
+              <Text style={{ color: '#64748B', fontSize: 14 }}>
                 Back to{' '}
-                <Text className="text-blue-400 font-semibold">Login</Text>
+                <Text style={{ color: '#D4A017', fontWeight: '700' }}>Login</Text>
               </Text>
             </TouchableOpacity>
           </Animated.View>

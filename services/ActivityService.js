@@ -38,6 +38,10 @@ const activityService = {
   deleteWatch: (videoId) =>
     wrap('delete-watch', async () => (await api.delete(`/watch-history/${videoId}`)).data),
 
+  /** Bulk delete from the multi-select toolbar. `ids` are WatchHistory row ids. */
+  bulkDeleteWatch: (ids) =>
+    wrap('bulk-delete-watch', async () => (await api.post('/watch-history/bulk-delete', { ids })).data),
+
   clearWatch: () =>
     wrap('clear-watch', async () => (await api.delete('/watch-history')).data),
 

@@ -32,6 +32,19 @@ const authService = {
     }
   },
 
+  // Sign in / sign up with Google. The screen runs the OAuth flow with
+  // expo-auth-session, gets an id_token from Google, and hands it here.
+  // The backend verifies the token + returns the same { token, user }
+  // envelope as /login.
+  googleSignIn: async (idToken) => {
+    try {
+      const response = await api.post('/google', { idToken });
+      return response.data;
+    } catch (error) {
+      return error.response?.data || { success: false, message: 'Network error' };
+    }
+  },
+
   verifyEmail: async (email, otp) => {
     try {
       const response = await api.post('/verify-email', { email, otp });

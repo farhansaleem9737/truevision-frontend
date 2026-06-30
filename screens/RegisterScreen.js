@@ -11,6 +11,7 @@ import {
   Animated,
   Alert,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -140,10 +141,10 @@ export default function RegisterScreen({ navigation }) {
 
   return (
     <LinearGradient
-      colors={['#0f172a', '#1e293b', '#334155']}
+      colors={['#FFFFFF', '#F8FAFC', '#FFFFFF']}
       style={{ flex: 1 }}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -160,29 +161,40 @@ export default function RegisterScreen({ navigation }) {
           >
             {/* Header */}
             <View className="items-center mb-8">
-              <View className="w-16 h-16 bg-blue-500 rounded-full items-center justify-center mb-3">
-                <Text style={{ fontSize: 32 }}>🎬</Text>
-              </View>
-              <Text className="text-3xl font-black text-white mb-1">Create Account</Text>
-              <Text className="text-slate-400 text-sm">Join TrueVision today</Text>
+              {/* Logo — transparent PNG, no glow, sits directly on the background. */}
+              <Image
+                source={require('../assets/images/tv-icon.png')}
+                style={{
+                  width: 82,
+                  height: 82,
+                  marginBottom: 14,
+                }}
+                resizeMode="contain"
+              />
+              <Text style={{ fontSize: 30, fontWeight: '900', color: '#0F172A', marginBottom: 6 }}>
+                Create <Text style={{ color: '#D4A017' }}>Account</Text>
+              </Text>
+              <Text style={{ fontSize: 14, color: '#64748B', fontWeight: '500' }}>
+                Join <Text style={{ color: '#D4A017', fontWeight: '700' }}>TrueVision</Text> today
+              </Text>
             </View>
 
             {/* Form */}
             <View>
               {/* Full Name */}
               <View style={{ marginBottom: 16 }}>
-                <Text className="text-slate-300 text-sm font-medium mb-2 ml-1">
+                <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 8, marginLeft: 4 }}>
                   Full Name
                 </Text>
-                <View className="flex-row items-center bg-slate-800/50 rounded-2xl px-4 py-1 border border-slate-700">
-                  <Ionicons name="person-outline" size={20} color="#94a3b8" />
+                <View className="flex-row items-center px-4 py-1" style={{ backgroundColor: '#F8FAFC', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.45)' }}>
+                  <Ionicons name="person-outline" size={20} color="#D4A017" />
                   <TextInput
                     placeholder="John Doe"
-                    placeholderTextColor="#64748b"
+                    placeholderTextColor="#94A3B8"
                     value={formData.fullName}
                     onChangeText={(text) => updateField('fullName', text)}
                     editable={!loading}
-                    className="flex-1 text-white text-base px-3 py-3"
+                    style={{ flex: 1, color: '#0F172A', fontSize: 16, paddingHorizontal: 12, paddingVertical: 12 }}
                   />
                 </View>
                 {errors.fullName && (
@@ -192,19 +204,19 @@ export default function RegisterScreen({ navigation }) {
 
               {/* Username */}
               <View style={{ marginBottom: 16 }}>
-                <Text className="text-slate-300 text-sm font-medium mb-2 ml-1">
+                <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 8, marginLeft: 4 }}>
                   Username
                 </Text>
-                <View className="flex-row items-center bg-slate-800/50 rounded-2xl px-4 py-1 border border-slate-700">
-                  <Ionicons name="at-outline" size={20} color="#94a3b8" />
+                <View className="flex-row items-center px-4 py-1" style={{ backgroundColor: '#F8FAFC', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.45)' }}>
+                  <Ionicons name="at-outline" size={20} color="#D4A017" />
                   <TextInput
                     placeholder="johndoe"
-                    placeholderTextColor="#64748b"
+                    placeholderTextColor="#94A3B8"
                     value={formData.username}
                     onChangeText={(text) => updateField('username', text.toLowerCase())}
                     autoCapitalize="none"
                     editable={!loading}
-                    className="flex-1 text-white text-base px-3 py-3"
+                    style={{ flex: 1, color: '#0F172A', fontSize: 16, paddingHorizontal: 12, paddingVertical: 12 }}
                   />
                 </View>
                 {errors.username && (
@@ -214,20 +226,20 @@ export default function RegisterScreen({ navigation }) {
 
               {/* Email */}
               <View style={{ marginBottom: 16 }}>
-                <Text className="text-slate-300 text-sm font-medium mb-2 ml-1">
+                <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 8, marginLeft: 4 }}>
                   Email Address
                 </Text>
-                <View className="flex-row items-center bg-slate-800/50 rounded-2xl px-4 py-1 border border-slate-700">
-                  <Ionicons name="mail-outline" size={20} color="#94a3b8" />
+                <View className="flex-row items-center px-4 py-1" style={{ backgroundColor: '#F8FAFC', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.45)' }}>
+                  <Ionicons name="mail-outline" size={20} color="#D4A017" />
                   <TextInput
                     placeholder="john@example.com"
-                    placeholderTextColor="#64748b"
+                    placeholderTextColor="#94A3B8"
                     value={formData.email}
                     onChangeText={(text) => updateField('email', text)}
                     autoCapitalize="none"
                     keyboardType="email-address"
                     editable={!loading}
-                    className="flex-1 text-white text-base px-3 py-3"
+                    style={{ flex: 1, color: '#0F172A', fontSize: 16, paddingHorizontal: 12, paddingVertical: 12 }}
                   />
                 </View>
                 {errors.email && (
@@ -237,16 +249,16 @@ export default function RegisterScreen({ navigation }) {
 
               {/* Country */}
               <View style={{ marginBottom: 16 }}>
-                <Text className="text-slate-300 text-sm font-medium mb-2 ml-1">
+                <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 8, marginLeft: 4 }}>
                   Country
                 </Text>
-                <View className="bg-slate-800/50 rounded-2xl px-2 border border-slate-700">
+                <View className="px-2" style={{ backgroundColor: '#F8FAFC', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.45)' }}>
                   <Picker
                     selectedValue={formData.country}
                     onValueChange={(value) => updateField('country', value)}
                     enabled={!loading}
-                    style={{ color: '#fff', height: 50 }}
-                    dropdownIconColor="#94a3b8"
+                    style={{ color: '#0F172A', height: 50 }}
+                    dropdownIconColor="#64748B"
                   >
                     {countries.map((country) => (
                       <Picker.Item key={country} label={country} value={country} />
@@ -257,19 +269,19 @@ export default function RegisterScreen({ navigation }) {
 
               {/* Password */}
               <View style={{ marginBottom: 16 }}>
-                <Text className="text-slate-300 text-sm font-medium mb-2 ml-1">
+                <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 8, marginLeft: 4 }}>
                   Password
                 </Text>
-                <View className="flex-row items-center bg-slate-800/50 rounded-2xl px-4 py-1 border border-slate-700">
-                  <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" />
+                <View className="flex-row items-center px-4 py-1" style={{ backgroundColor: '#F8FAFC', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.45)' }}>
+                  <Ionicons name="lock-closed-outline" size={20} color="#D4A017" />
                   <TextInput
                     placeholder="Min. 8 characters"
-                    placeholderTextColor="#64748b"
+                    placeholderTextColor="#94A3B8"
                     value={formData.password}
                     onChangeText={(text) => updateField('password', text)}
                     secureTextEntry={!showPassword}
                     editable={!loading}
-                    className="flex-1 text-white text-base px-3 py-3"
+                    style={{ flex: 1, color: '#0F172A', fontSize: 16, paddingHorizontal: 12, paddingVertical: 12 }}
                   />
                   <TouchableOpacity 
                     onPress={() => setShowPassword(!showPassword)}
@@ -278,7 +290,7 @@ export default function RegisterScreen({ navigation }) {
                     <Ionicons
                       name={showPassword ? 'eye-outline' : 'eye-off-outline'}
                       size={20}
-                      color="#94a3b8"
+                      color="#64748B"
                     />
                   </TouchableOpacity>
                 </View>
@@ -289,19 +301,19 @@ export default function RegisterScreen({ navigation }) {
 
               {/* Confirm Password */}
               <View style={{ marginBottom: 16 }}>
-                <Text className="text-slate-300 text-sm font-medium mb-2 ml-1">
+                <Text style={{ color: '#334155', fontSize: 14, fontWeight: '600', marginBottom: 8, marginLeft: 4 }}>
                   Confirm Password
                 </Text>
-                <View className="flex-row items-center bg-slate-800/50 rounded-2xl px-4 py-1 border border-slate-700">
-                  <Ionicons name="lock-closed-outline" size={20} color="#94a3b8" />
+                <View className="flex-row items-center px-4 py-1" style={{ backgroundColor: '#F8FAFC', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212, 160, 23, 0.45)' }}>
+                  <Ionicons name="lock-closed-outline" size={20} color="#D4A017" />
                   <TextInput
                     placeholder="Re-enter password"
-                    placeholderTextColor="#64748b"
+                    placeholderTextColor="#94A3B8"
                     value={formData.confirmPassword}
                     onChangeText={(text) => updateField('confirmPassword', text)}
                     secureTextEntry={!showConfirmPassword}
                     editable={!loading}
-                    className="flex-1 text-white text-base px-3 py-3"
+                    style={{ flex: 1, color: '#0F172A', fontSize: 16, paddingHorizontal: 12, paddingVertical: 12 }}
                   />
                   <TouchableOpacity 
                     onPress={() => setShowConfirmPassword(!showConfirmPassword)}
@@ -310,7 +322,7 @@ export default function RegisterScreen({ navigation }) {
                     <Ionicons
                       name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
                       size={20}
-                      color="#94a3b8"
+                      color="#64748B"
                     />
                   </TouchableOpacity>
                 </View>
@@ -327,41 +339,45 @@ export default function RegisterScreen({ navigation }) {
                 className="mt-4"
               >
                 <LinearGradient
-                  colors={loading ? ['#64748b', '#475569'] : ['#3b82f6', '#2563eb', '#1d4ed8']}
+                  colors={loading ? ['#94A3B8', '#64748B'] : ['#E0B028', '#D4A017', '#B8860B']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
-                  className="rounded-2xl py-4 items-center"
                   style={{
-                    shadowColor: '#3b82f6',
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: loading ? 0.1 : 0.3,
-                    shadowRadius: 8,
-                    elevation: loading ? 2 : 8,
+                    borderRadius: 16,
+                    paddingVertical: 16,
+                    alignItems: 'center',
+                    shadowColor: '#D4A017',
+                    shadowOffset: { width: 0, height: 6 },
+                    shadowOpacity: loading ? 0.1 : 0.35,
+                    shadowRadius: 14,
+                    elevation: loading ? 2 : 10,
                   }}
                 >
                   {loading ? (
                     <View className="flex-row items-center">
-                      <ActivityIndicator color="#fff" size="small" />
-                      <Text className="text-white text-base font-bold ml-2">
+                      <ActivityIndicator color="#111111" size="small" />
+                      <Text style={{ color: '#111111', fontSize: 16, fontWeight: '800', marginLeft: 10 }}>
                         Creating Account...
                       </Text>
                     </View>
                   ) : (
-                    <Text className="text-white text-base font-bold">Create Account</Text>
+                    <Text style={{ color: '#111111', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 }}>
+                      Create Account
+                    </Text>
                   )}
                 </LinearGradient>
               </TouchableOpacity>
 
               {/* Login Link */}
               <View className="flex-row justify-center items-center mt-6">
-                <Text className="text-slate-400 text-base">
+                <Text style={{ color: '#64748B', fontSize: 15 }}>
                   Already have an account?{' '}
                 </Text>
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => navigation.navigate('Login')}
                   disabled={loading}
                 >
-                  <Text className="text-blue-400 text-base font-semibold">
+                  <Text style={{ color: '#D4A017', fontSize: 15, fontWeight: '700' }}>
                     Sign In
                   </Text>
                 </TouchableOpacity>

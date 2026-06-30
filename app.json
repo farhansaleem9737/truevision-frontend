@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "truevision",
+    "name": "TrueVision",
     "slug": "truevision",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -14,9 +14,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#1a1a1a",
         "foregroundImage": "./assets/images/tv-icon.png",
-        "backgroundImage": "./assets/images/tv-icon.png",
         "monochromeImage": "./assets/images/tv-icon.png"
       },
       "edgeToEdgeEnabled": false,
@@ -35,12 +34,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/tv-icon.png",
-          "imageWidth": 200,
+          "imageWidth": 130,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#000000"
-          }
+          "backgroundColor": "#ffffff"
         }
       ],
       "expo-video",

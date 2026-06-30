@@ -1,255 +1,186 @@
+// truevision/screens/SplashScreen.js
+//
+// Premium, minimalist launch screen — App Store quality.
+//
+// Layout (logo sits ~40% down the screen, slightly above center):
+//
+//        ┌──────────────────────────┐
+//        │                          │
+//        │        [ TV mark ]       │  ← small, flat, no container/shadow
+//        │        TrueVision        │  ← 26px / 600 / #111827
+//        │     Learn. Verify. Grow. │  ← 13px / light / #6B7280
+//        │                          │
+//        │   Preparing your feed…   │  ← muted micro-label
+//        │   ▁▁▁▔▔▔▁▁▁▁▁▁▁▁▁▁▁▁▁▁   │  ← thin indeterminate progress line
+//        └──────────────────────────┘
+//
+// Pure white by default; honours the app's dark toggle (pure black) so the
+// splash never clashes with a dark-mode session. No gray card, no heavy
+// shadow, no gradient, no 3D — flat and clean.
+
 import React, { useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  StatusBar,
-  Animated,
-  Image,
-  Dimensions,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { View, Text, StatusBar, Animated, Image, Easing, StyleSheet, Dimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 
-const { width, height } = Dimensions.get('window');
+const { height: SCREEN_H } = Dimensions.get('window');
+
+// ── Design tokens ────────────────────────────────────────────────────────────
+const LOGO_SIZE   = 72;            // small, calm
+const TRACK_W     = 168;           // progress-line width
+const SEGMENT_W   = 64;            // sliding highlight width
+
+const PALETTES = {
+  light: {
+    bg:         '#ffffff',
+    brand:      '#111827',
+    tagline:    '#6B7280',
+    loading:    '#9CA3AF',
+    track:      '#EEF2F7',
+    segment:    '#2563eb',
+    statusBar:  'dark-content',
+  },
+  dark: {
+    bg:         '#000000',
+    brand:      '#ffffff',
+    tagline:    'rgba(255,255,255,0.55)',
+    loading:    'rgba(255,255,255,0.40)',
+    track:      'rgba(255,255,255,0.10)',
+    segment:    '#60a5fa',
+    statusBar:  'light-content',
+  },
+};
 
 export default function SplashScreen({ navigation }) {
+  const { isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const c = isDark ? PALETTES.dark : PALETTES.light;
+
+  // AuthProvider wraps both render paths; `navigation` is undefined on the
+  // hydration path (RootNavigator) — the nav effect guards for that.
   const { isAuthenticated, loading } = useAuth();
-  
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.3)).current;
-  const slideAnim = useRef(new Animated.Value(50)).current;
-  const rotateAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // ── Animation values ───────────────────────────────────────────────────────
+  const markFade  = useRef(new Animated.Value(0)).current;
+  const markScale = useRef(new Animated.Value(0.94)).current;
+  const textFade  = useRef(new Animated.Value(0)).current;   // brand + tagline
+  const progFade  = useRef(new Animated.Value(0)).current;   // loading area
+  const slide     = useRef(new Animated.Value(0)).current;   // progress segment
 
   useEffect(() => {
-    // Start animations
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 1000,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        friction: 4,
-        tension: 40,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 1000,
-        useNativeDriver: true,
-      }),
+    // Entrance: mark → text → loading area
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(markFade,  { toValue: 1, duration: 700, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(markScale, { toValue: 1, duration: 700, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]),
+      Animated.timing(textFade, { toValue: 1, duration: 450, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(progFade, { toValue: 1, duration: 400, easing: Easing.out(Easing.quad), useNativeDriver: true }),
     ]).start();
 
-    // Continuous pulse animation
+    // Indeterminate progress: a highlight glides across the track, on loop.
     Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-
-    // Rotation animation
-    Animated.loop(
-      Animated.timing(rotateAnim, {
-        toValue: 1,
-        duration: 3000,
-        useNativeDriver: true,
+      Animated.timing(slide, {
+        toValue: 1, duration: 1150, easing: Easing.inOut(Easing.ease), useNativeDriver: true,
       })
-    ).start();
-
-    // Navigate after animations and auth check
-    if (!loading) {
-      const timer = setTimeout(() => {
-        if (isAuthenticated) {
-          navigation.replace('Home');
-        } else {
-          navigation.replace('Login');
-        }
-      }, 2500);
-
-      return () => clearTimeout(timer);
-    }
-  }, [loading, isAuthenticated]);
-
-  const spin = rotateAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
-  });
-
-  return (
-    <LinearGradient
-      colors={['#1e3a8a', '#2563eb', '#3b82f6']}
-      style={{ flex: 1 }}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-    >
-      <StatusBar barStyle="light-content" backgroundColor="#1e3a8a" />
-
-      {/* Animated Background Circles */}
-      <Animated.View
-        style={{
-          position: 'absolute',
-          top: -100,
-          right: -100,
-          width: 300,
-          height: 300,
-          borderRadius: 150,
-          backgroundColor: 'rgba(255, 255, 255, 0.1)',
-          transform: [{ rotate: spin }],
-        }}
-      />
-      <Animated.View
-        style={{
-          position: 'absolute',
-          bottom: -150,
-          left: -100,
-          width: 400,
-          height: 400,
-          borderRadius: 200,
-          backgroundColor: 'rgba(255, 255, 255, 0.05)',
-          transform: [{ rotate: spin }],
-        }}
-      />
-
-      {/* Main Content */}
-      <View className="flex-1 items-center justify-center px-8">
-        <Animated.View
-          style={{
-            opacity: fadeAnim,
-            transform: [{ scale: scaleAnim }, { translateY: slideAnim }],
-          }}
-          className="items-center"
-        >
-          {/* Logo Container with Glow Effect */}
-          <Animated.View
-            style={{
-              transform: [{ scale: pulseAnim }],
-            }}
-            className="mb-8"
-          >
-            <View className="w-32 h-32 items-center justify-center">
-              {/* Outer Glow */}
-              <View className="absolute w-40 h-40 bg-white/20 rounded-full" 
-                style={{
-                  shadowColor: '#fff',
-                  shadowOffset: { width: 0, height: 0 },
-                  shadowOpacity: 0.6,
-                  shadowRadius: 30,
-                  elevation: 15,
-                }}
-              />
-              {/* Inner Circle */}
-              <View className="w-32 h-32 bg-white rounded-full items-center justify-center"
-                style={{
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 10 },
-                  shadowOpacity: 0.3,
-                  shadowRadius: 20,
-                  elevation: 10,
-                }}
-              >
-                <Text style={{ fontSize: 56 }}>🎬</Text>
-              </View>
-            </View>
-          </Animated.View>
-
-          {/* Brand Name */}
-          <Text className="text-6xl font-black text-white tracking-wider mb-3"
-            style={{
-              textShadowColor: 'rgba(0, 0, 0, 0.3)',
-              textShadowOffset: { width: 0, height: 4 },
-              textShadowRadius: 10,
-            }}
-          >
-            TrueVision
-          </Text>
-
-          {/* Tagline */}
-          <View className="flex-row items-center space-x-2 mb-6">
-            <View className="w-12 h-0.5 bg-blue-200/60" />
-            <Text className="text-blue-50 text-base font-medium tracking-widest">
-              AUTHENTIC
-            </Text>
-            <View className="w-1.5 h-1.5 bg-blue-200 rounded-full" />
-            <Text className="text-blue-50 text-base font-medium tracking-widest">
-              VERIFIED
-            </Text>
-            <View className="w-1.5 h-1.5 bg-blue-200 rounded-full" />
-            <Text className="text-blue-50 text-base font-medium tracking-widest">
-              INTELLIGENT
-            </Text>
-            <View className="w-12 h-0.5 bg-blue-200/60" />
-          </View>
-
-          {/* Description */}
-          <View className="bg-white/10 backdrop-blur-lg rounded-2xl px-6 py-4 mt-4"
-            style={{
-              borderWidth: 1,
-              borderColor: 'rgba(255, 255, 255, 0.2)',
-            }}
-          >
-            <Text className="text-blue-50 text-center text-base leading-6">
-              AI-Powered Short Video{'\n'}Information Platform
-            </Text>
-          </View>
-        </Animated.View>
-
-        {/* Loading Indicator */}
-        <View className="absolute bottom-32 flex-row space-x-3">
-          <LoadingDot delay={0} />
-          <LoadingDot delay={200} />
-          <LoadingDot delay={400} />
-        </View>
-
-        {/* Footer */}
-        <View className="absolute bottom-12 items-center">
-          <Text className="text-blue-100 text-sm font-medium mb-1">
-            BS-IT Final Year Project
-          </Text>
-          <Text className="text-blue-200 text-xs">
-            Powered by Artificial Intelligence
-          </Text>
-        </View>
-      </View>
-    </LinearGradient>
-  );
-}
-
-function LoadingDot({ delay }) {
-  const opacity = useRef(new Animated.Value(0.3)).current;
-
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 600,
-          delay,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacity, {
-          toValue: 0.3,
-          duration: 600,
-          useNativeDriver: true,
-        }),
-      ])
     ).start();
   }, []);
 
+  // ── Navigation (guarded for the no-nav hydration render) ─────────────────────
+  useEffect(() => {
+    if (loading || !navigation) return;
+    const timer = setTimeout(() => {
+      navigation.replace(isAuthenticated ? 'Home' : 'Login');
+    }, 2200);
+    return () => clearTimeout(timer);
+  }, [loading, isAuthenticated, navigation]);
+
+  const segmentX = slide.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-SEGMENT_W, TRACK_W],
+  });
+
   return (
-    <Animated.View
-      style={{ opacity }}
-      className="w-3 h-3 bg-white rounded-full"
-    />
+    <View style={[styles.root, { backgroundColor: c.bg }]}>
+      <StatusBar barStyle={c.statusBar} backgroundColor={c.bg} />
+
+      {/* Brand cluster — positioned ~40% down the screen */}
+      <View style={[styles.cluster, { paddingTop: SCREEN_H * 0.32 }]}>
+        <Animated.Image
+          source={require('../assets/images/tv-icon.png')}
+          resizeMode="contain"
+          style={{
+            width: LOGO_SIZE,
+            height: LOGO_SIZE,
+            opacity: markFade,
+            transform: [{ scale: markScale }],
+          }}
+        />
+
+        <Animated.Text style={[styles.brand, { color: c.brand, opacity: textFade }]}>
+          TrueVision
+        </Animated.Text>
+
+        <Animated.Text style={[styles.tagline, { color: c.tagline, opacity: textFade }]}>
+          Learn. Verify. Grow.
+        </Animated.Text>
+      </View>
+
+      {/* Loading area — clean bottom */}
+      <Animated.View style={[styles.loadingArea, { bottom: insets.bottom + 72, opacity: progFade }]}>
+        <Text style={[styles.loadingText, { color: c.loading }]}>Preparing your feed…</Text>
+        <View style={[styles.track, { backgroundColor: c.track }]}>
+          <Animated.View
+            style={[
+              styles.segment,
+              { backgroundColor: c.segment, transform: [{ translateX: segmentX }] },
+            ]}
+          />
+        </View>
+      </Animated.View>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+
+  cluster: { flex: 1, alignItems: 'center' },
+
+  brand: {
+    marginTop: 24,
+    fontSize: 26,
+    fontWeight: '600',
+    letterSpacing: 0.8,
+  },
+  tagline: {
+    marginTop: 10,
+    fontSize: 13,
+    fontWeight: '300',
+    letterSpacing: 0.4,
+  },
+
+  loadingArea: {
+    position: 'absolute',
+    alignSelf: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 12,
+    fontWeight: '400',
+    letterSpacing: 0.6,
+    marginBottom: 14,
+  },
+  track: {
+    width: TRACK_W,
+    height: 3,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  segment: {
+    width: SEGMENT_W,
+    height: 3,
+    borderRadius: 3,
+  },
+});
