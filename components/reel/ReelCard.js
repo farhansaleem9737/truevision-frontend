@@ -7,9 +7,9 @@
 //   • follow is local-only
 //   • everything else (UI, animations, comments button, more button) is identical
 //
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, TouchableWithoutFeedback, Animated, Share, Alert,
+  View, Text, TouchableWithoutFeedback, TouchableOpacity, Animated, Share, Alert,
   StyleSheet, Dimensions, ActivityIndicator,
 } from 'react-native';
 import AsyncStorage          from '@react-native-async-storage/async-storage';
@@ -24,7 +24,7 @@ import MoreSheet             from './MoreSheet';
 import InfoButton            from '../video/InfoButton';
 import VideoInfoPanel        from '../video/VideoInfoPanel';
 import videoService          from '../../services/VideoService';
-import { pickVideoUrl }      from '../../utils/videoQuality';
+import { buildFallbackChain } from '../../utils/videoQuality';
 import usePreferences        from '../../hooks/usePreferences';
 
 // Local-only save state for external imports (Pixabay etc). Those videos
@@ -79,13 +79,37 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   const isExternal = item.source && item.source !== 'truevision';
   const { prefs } = usePreferences();
 
-  // ── Video player ────────────────────────────────────────────────────────
-  // Prefer a Cloudinary-encoded 720p (or 480p in data saver) for our own
-  // uploads instead of the raw 4K original. External items ship a single
-  // pre-picked URL and fall back to that.
-  const videoUrl = pickVideoUrl(item, { dataSaver: prefs?.content?.dataSaver });
+  // ── Video player with graceful degradation ─────────────────────────────
+  //
+  // The player walks a fallback chain of URLs:
+  //   720p (Cloudinary-eager-derived when saved)
+  //     → 480p (URL-based transform, transcodes lazily)
+  //     → 360p (Cloudinary-eager-derived when saved)
+  //     → raw secureUrl
+  //
+  // If a URL emits a `status === 'error'` OR the player never reaches
+  // `readyToPlay` within LOAD_TIMEOUT_MS, we step to the next rung. When
+  // every rung is exhausted we surface an error UI with a Retry button —
+  // no more infinite spinner.
+  //
+  // This is the production-grade safety net for the "newest video hangs"
+  // bug: even if Cloudinary's eager transcode has raced past the client's
+  // first playback attempt on 720p, the 360p rung (also eager-derived) or
+  // the raw secureUrl will succeed.
 
-  const player = useVideoPlayer(videoUrl, (p) => {
+  const LOAD_TIMEOUT_MS = 12000; // per-rung ceiling
+
+  const chain = useMemo(
+    () => buildFallbackChain(item, { dataSaver: prefs?.content?.dataSaver }),
+    [item, prefs?.content?.dataSaver],
+  );
+  const [rung, setRung]         = useState(0);           // index into `chain`
+  const [playError, setPlayError] = useState(null);
+  const [retryToken, setRetryToken] = useState(0);       // bumps to force fresh player
+
+  const activeUrl = chain[rung] || '';
+
+  const player = useVideoPlayer(activeUrl, (p) => {
     p.loop  = true;
     p.muted = false;
     // Smaller forward buffer = faster first frame. Player keeps fetching after start.
@@ -105,28 +129,76 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
 
+  // Reset per-URL state whenever the active URL flips (rung advance / retry).
   useEffect(() => {
-    const s1 = player.addListener('statusChange', ({ status }) => {
+    setIsReady(false);
+    setProgress(0);
+    setDuration(0);
+  }, [activeUrl, retryToken]);
+
+  // Advance to the next rung if the current one fails or hasn't produced a
+  // first frame in LOAD_TIMEOUT_MS. Called from both the timeout effect and
+  // the statusChange 'error' branch to keep the recovery path single.
+  const stepFallbackOrFail = useCallback((reason) => {
+    if (rung + 1 < chain.length) {
+      console.warn(`[ReelCard] Playback fallback (${reason}) — ${chain[rung]} → ${chain[rung + 1]}`);
+      setRung((r) => r + 1);
+    } else {
+      console.warn(`[ReelCard] Playback failed after ${chain.length} rungs (${reason})`);
+      setPlayError(reason);
+    }
+  }, [chain, rung]);
+
+  // statusChange listener — expo-video emits 'error' on codec/network failure.
+  useEffect(() => {
+    const s1 = player.addListener('statusChange', ({ status, error }) => {
       if (status === 'readyToPlay') {
         setIsReady(true);
+        setPlayError(null);
         setDuration(player.duration ?? 0);
+      } else if (status === 'error') {
+        stepFallbackOrFail(error?.message || 'Playback error');
       }
     });
     const s2 = player.addListener('timeUpdate', ({ currentTime }) => {
       const t = currentTime ?? 0;
       setProgress(duration > 0 ? t / duration : 0);
     });
-    return () => { s1.remove(); s2.remove(); };
-  }, [player, duration]);
+    // playbackError is a separate channel on some player versions.
+    let s3;
+    try {
+      s3 = player.addListener('playbackError', (evt) => {
+        stepFallbackOrFail(evt?.message || 'Playback error');
+      });
+    } catch (_) { /* older expo-video without this event */ }
+    return () => { s1.remove(); s2.remove(); s3?.remove(); };
+  }, [player, duration, stepFallbackOrFail]);
+
+  // Loading-timeout effect: if the current rung hasn't reached readyToPlay
+  // within LOAD_TIMEOUT_MS, step to the next rung. Only runs when the row
+  // is actually meant to be playing (visible + focused).
+  useEffect(() => {
+    if (isReady || playError || !activeUrl || !isActive || !isFocused) return;
+    const t = setTimeout(() => stepFallbackOrFail('load-timeout'), LOAD_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [isReady, playError, activeUrl, isActive, isFocused, retryToken, stepFallbackOrFail]);
+
+  // Manual retry — reset to the primary rung, bump the token so the player
+  // effect re-fires even if `activeUrl` is unchanged.
+  const retryPlayback = useCallback(() => {
+    setPlayError(null);
+    setRung(0);
+    setRetryToken((n) => n + 1);
+  }, []);
 
   // Play/pause based on viewability AND screen focus.
   // isFocused becomes false when the user navigates to another tab — that
   // pauses the video and prevents background playback.
   const [userPaused, setUserPaused] = useState(false);
   useEffect(() => {
-    if (isActive && isFocused && !userPaused) player.play();
+    if (isActive && isFocused && !userPaused && !playError) player.play();
     else player.pause();
-  }, [isActive, isFocused, userPaused, player]);
+  }, [isActive, isFocused, userPaused, playError, player]);
 
   // ── Social state ────────────────────────────────────────────────────────
   const [isLiked,     setIsLiked]     = useState(item.isLiked     ?? false);
@@ -285,10 +357,27 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
             style={[S.gradBot, { height: bottomOffset + 220 }]} pointerEvents="none"
           />
 
-          {/* Loading spinner */}
-          {!isReady && (
+          {/* Loading spinner — hidden once we surface an error card so the
+              spinner never fights the retry UI. */}
+          {!isReady && !playError && (
             <View style={S.loader}>
               <ActivityIndicator size="large" color="#fff" />
+            </View>
+          )}
+
+          {/* Error card + Retry — replaces the infinite spinner when every
+              fallback rung has failed. Tapping Retry resets to the primary
+              URL and re-runs the load, giving Cloudinary any extra time it
+              still needed to finish the eager transcode. */}
+          {playError && (
+            <View style={S.errorCard}>
+              <Ionicons name="cloud-offline-outline" size={44} color="rgba(255,255,255,0.85)" />
+              <Text style={S.errorTitle}>Playback unavailable</Text>
+              <Text style={S.errorSub}>The video could not be loaded right now.</Text>
+              <TouchableOpacity style={S.retryBtn} onPress={retryPlayback} activeOpacity={0.85}>
+                <Ionicons name="refresh" size={18} color="#fff" />
+                <Text style={S.retryTxt}>Try again</Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -377,4 +466,21 @@ const S = StyleSheet.create({
   // ⓘ button — top-right, safe-area-friendly (matches status-bar inset on
   // most devices without needing useSafeAreaInsets in this component).
   infoBtnWrap:  { position: 'absolute', top: 56, right: 14, zIndex: 25 },
+
+  // Playback-error card + retry — sits centre-screen over the video so the
+  // thumbnail behind it still hints at the video contents.
+  errorCard:  {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  errorTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginTop: 14 },
+  errorSub:   { color: 'rgba(255,255,255,0.72)', fontSize: 13, marginTop: 6, textAlign: 'center' },
+  retryBtn:   {
+    marginTop: 18, flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 18, paddingVertical: 10,
+    borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+  },
+  retryTxt:   { color: '#fff', fontWeight: '700', marginLeft: 8, fontSize: 14 },
 });

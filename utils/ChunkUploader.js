@@ -36,11 +36,18 @@ const uploadChunkFile = (
     // file field — React Native native stack reads the temp URI as real bytes
     formData.append('file', { uri: tempUri, type: 'video/mp4', name: 'chunk.mp4' });
 
-    // Auth params on every chunk (required by Cloudinary)
+    // Auth params on every chunk (required by Cloudinary — every part of a
+    // chunked upload must carry the SAME signed params byte-for-byte).
     formData.append('api_key',   sigData.api_key);
     formData.append('timestamp', String(sigData.timestamp));
     formData.append('signature', sigData.signature);
     formData.append('folder',    sigData.folder);
+    // Forward eager transforms so Cloudinary pre-generates 720p + 360p as
+    // part of the final chunk's assembly. Signed on the server; if absent
+    // (older signature response) we skip — chunk uploads must not add
+    // fields that weren't in the signature.
+    if (sigData.eager)       formData.append('eager',       sigData.eager);
+    if (sigData.eager_async) formData.append('eager_async', sigData.eager_async);
 
     const xhr = new XMLHttpRequest();
 

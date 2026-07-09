@@ -18,6 +18,7 @@ import BottomTabNavigator       from './navigation/BottomTabNavigator';
 import VideoPlayerScreen        from './screens/VideoPlayerScreen';
 import EditProfileScreen        from './screens/EditProfileScreen';
 import ChatConversationScreen   from './screens/ChatConversationScreen';
+import ForwardMessageScreen     from './screens/ForwardMessageScreen';
 import ShareVideoScreen         from './screens/ShareVideoScreen';
 import SettingsScreen           from './screens/SettingsScreen';
 import HelpSupportScreen        from './screens/HelpSupportScreen';
@@ -102,6 +103,16 @@ function AppStack() {
         component={ChatConversationScreen}
         options={{
           animation: 'slide_from_right',
+        }}
+      />
+
+      {/* Forward messages — modal-style presentation, matches WhatsApp/Telegram flow */}
+      <Stack.Screen
+        name="ForwardMessage"
+        component={ForwardMessageScreen}
+        options={{
+          animation: 'slide_from_bottom',
+          presentation: 'modal',
         }}
       />
 

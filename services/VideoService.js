@@ -143,10 +143,17 @@ const videoService = {
         return { success: false, message: `[Auth] ${e.response?.data?.message || e.message || 'Could not start upload'}` };
       }
 
-      const { signature, timestamp, folder, api_key, cloud_name } = sigData;
+      const { signature, timestamp, folder, api_key, cloud_name, eager, eager_async } = sigData;
       const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloud_name}/video/upload`;
       const mimeType      = metadata.mimeType || 'video/mp4';
       const ext           = mimeType.split('/')[1] || 'mp4';
+
+      // eager/eager_async are signed by the server — they MUST be forwarded
+      // in the FormData unchanged, or Cloudinary will reject the signature.
+      // This is what triggers pre-emptive transcoding of the 720p + 360p
+      // rungs at upload time, preventing the "newest-video first-play hangs"
+      // bug caused by on-demand transcoding.
+      console.log(`[Upload] Signed eager transforms: ${eager || '(none — legacy signature)'}`);
 
       // ── Step 3: Upload to Cloudinary (30-94%) ────────────────────────────────
       let cl;
@@ -172,6 +179,11 @@ const videoService = {
             formData.append('timestamp', String(timestamp));
             formData.append('signature', signature);
             formData.append('folder',    folder);
+            // Forward eager transforms so Cloudinary pre-generates the 720p
+            // + 360p derived assets. Signed on the server; if missing (older
+            // signature response) we skip.
+            if (eager)       formData.append('eager',       eager);
+            if (eager_async) formData.append('eager_async', eager_async);
 
             const xhr = new XMLHttpRequest();
 
@@ -217,6 +229,20 @@ const videoService = {
       // ── Step 4: Save video record on our server (95-99%) ─────────────────────
       try {
         const { mimeType: _m, durationMs: _d, ...cleanMeta } = metadata;
+        // eagerResults carries the exact Cloudinary-signed URLs for the
+        // pre-transcoded 720p + 360p variants. Server stores them into the
+        // `qualities` map so playback URLs point at derived assets that
+        // exist (or are being created) — no on-demand transcode wait.
+        const eagerResults = Array.isArray(cl.eager)
+          ? cl.eager.map((e) => ({
+              secure_url:      e.secure_url,
+              width:           e.width,
+              height:          e.height,
+              transformation:  e.transformation,
+              status:          e.status,
+            }))
+          : [];
+        console.log(`[Upload] Cloudinary eager rungs returned: ${eagerResults.map(e => `${e.height}p`).join(', ') || 'none'}`);
         const saveRes = await api.post('/create', {
           publicId:  cl.public_id,
           secureUrl: cl.secure_url,
@@ -225,6 +251,7 @@ const videoService = {
           format:    cl.format    || '',
           width:     cl.width     || 0,
           height:    cl.height    || 0,
+          eagerResults,
           ...cleanMeta,
         });
         return saveRes.data;

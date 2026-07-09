@@ -51,3 +51,12 @@ app-example
 # generated native folders
 /ios
 /android
+
+
+# AI Models
+models/truevision_model/model.safetensors
+
+*.safetensors
+*.bin
+*.pt
+*.pth

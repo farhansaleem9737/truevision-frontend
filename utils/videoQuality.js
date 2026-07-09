@@ -45,3 +45,32 @@ export const pickVideoUrl = (item, opts = {}) => {
   // No qualities ladder — fall back to the original.
   return item.videoUrl || item.uri || '';
 };
+
+/**
+ * Build a graceful-degradation URL chain for one video.
+ *
+ * The player walks this list on error or a hard-loading-timeout. Each rung
+ * is a legitimately-different URL — no duplicates. This is the safety net
+ * for the (rare, race-condition) case where Cloudinary's eager transcode
+ * for the newest upload hasn't finished by the time playback starts.
+ *
+ *   [ 720p (Cloudinary-eager-derived when saved) ,
+ *     480p (URL-based transform)                 ,
+ *     360p (Cloudinary-eager-derived when saved) ,
+ *     raw secureUrl                              ]
+ *
+ * Data-saver flips the primary to 360p so it's the FIRST URL we try, saving
+ * bandwidth and avoiding wasted attempts on the higher rungs.
+ */
+export const buildFallbackChain = (item, opts = {}) => {
+  if (!item) return [];
+  const q = item.qualities || {};
+  const chain = opts.dataSaver
+    ? [q['360p'], q['480p'], q['720p'], item.videoUrl]
+    : [q['720p'], q['480p'], q['360p'], item.videoUrl];
+  // Drop empties and de-dupe (some items share URLs across rungs).
+  const seen = new Set();
+  return chain
+    .filter((u) => typeof u === 'string' && u.length > 0)
+    .filter((u) => (seen.has(u) ? false : (seen.add(u), true)));
+};

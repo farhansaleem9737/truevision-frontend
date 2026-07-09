@@ -2,6 +2,7 @@ import { createContext, useState, useContext, useEffect, useCallback } from 'rea
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../services/AuthServices';
 import socketService from '../services/SocketService';
+import { registerForPushNotifications, unregisterPushNotifications } from '../services/pushRegistration';
 
 const AuthContext = createContext();
 
@@ -55,6 +56,9 @@ export const AuthProvider = ({ children }) => {
         }
         // Connect Socket.IO for real-time chat
         socketService.connect();
+        // App relaunch on a signed-in device — re-register the push token so
+        // Expo/APNs rotations don't leave us out of sync with the backend.
+        registerForPushNotifications().catch(() => {});
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -101,6 +105,11 @@ export const AuthProvider = ({ children }) => {
 
         // Connect Socket.IO for real-time chat
         socketService.connect();
+
+        // Register this device's Expo push token so we can push chat
+        // notifications when the user is backgrounded/killed. Fire-and-forget
+        // — the user is not blocked on the OS permission prompt.
+        registerForPushNotifications().catch(() => {});
 
         return {
           success: true,
@@ -193,6 +202,10 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      // Unregister this device's push token BEFORE we drop the auth header —
+      // otherwise a shared device would keep receiving notifications for the
+      // signed-out account until the token naturally expired.
+      await unregisterPushNotifications().catch(() => {});
       socketService.disconnect();
       await clearAuthData();
       return { success: true };
