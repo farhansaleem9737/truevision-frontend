@@ -91,8 +91,8 @@ export const AuthProvider = ({ children }) => {
 
   const clearAuthData = async () => {
     try {
-      await AsyncStorage.removeItem('authToken');
-      await AsyncStorage.removeItem('userData');
+      // multiRemove clears access + refresh + cached user atomically.
+      await AsyncStorage.multiRemove(['authToken', 'refreshToken', 'userData']);
       setToken(null);
       setUser(null);
       setIsAuthenticated(false);
@@ -109,15 +109,31 @@ export const AuthProvider = ({ children }) => {
 
   // Shared success path — used by password login, Google, email-verify and
   // the 2FA completion so all four set up the session identically.
-  const establishSession = (data) => {
+  //
+  // Ordering matters (fixes the first-login socket race): PERSIST the tokens
+  // FIRST and await it, THEN connect the socket. The socket handshake + the
+  // guarded axios instances read the token straight from AsyncStorage, so they
+  // must never run before the write completes.
+  const establishSession = async (data) => {
     const normalized = normalizeUser(data.user);
+
+    const entries = [
+      ['authToken', data.token],
+      ['userData', JSON.stringify(normalized)],
+    ];
+    // Refresh token may be absent from an old backend — stay backward-compatible.
+    if (data.refreshToken) entries.push(['refreshToken', data.refreshToken]);
+    try {
+      await AsyncStorage.multiSet(entries);
+    } catch (e) {
+      console.error('AsyncStorage write error:', e);
+    }
+
     setToken(data.token);
     setUser(normalized);
     setIsAuthenticated(true);
-    Promise.all([
-      AsyncStorage.setItem('authToken', data.token),
-      AsyncStorage.setItem('userData', JSON.stringify(normalized)),
-    ]).catch((e) => console.error('AsyncStorage write error:', e));
+
+    // Token is now persisted → safe to connect + subscribe.
     socketService.connect();
     registerForPushNotifications().catch(() => {});
     return normalized;
@@ -141,26 +157,8 @@ export const AuthProvider = ({ children }) => {
       }
 
       if (response.success) {
-        const normalized = normalizeUser(response.data.user);
-        // Update state immediately — don't block on storage writes
-        setToken(response.data.token);
-        setUser(normalized);
-        setIsAuthenticated(true);
-
-        // Write both keys in parallel in the background
-        Promise.all([
-          AsyncStorage.setItem('authToken', response.data.token),
-          AsyncStorage.setItem('userData', JSON.stringify(normalized)),
-        ]).catch(e => console.error('AsyncStorage write error:', e));
-
-        // Connect Socket.IO for real-time chat
-        socketService.connect();
-
-        // Register this device's Expo push token so we can push chat
-        // notifications when the user is backgrounded/killed. Fire-and-forget
-        // — the user is not blocked on the OS permission prompt.
-        registerForPushNotifications().catch(() => {});
-
+        // Persist tokens (incl. refresh) BEFORE connecting the socket.
+        const normalized = await establishSession(response.data);
         return {
           success: true,
           message: response.message,
@@ -192,7 +190,7 @@ export const AuthProvider = ({ children }) => {
       if (!response.success) {
         return { success: false, message: response.message, code: response.code };
       }
-      const normalized = establishSession(response.data);
+      const normalized = await establishSession(response.data);
       return { success: true, message: response.message, user: normalized };
     } catch (error) {
       console.error('2FA verify error:', error);
@@ -222,18 +220,7 @@ export const AuthProvider = ({ children }) => {
         return { success: false, message: response.message || 'Google sign-in failed' };
       }
 
-      const normalized = normalizeUser(response.data.user);
-      setToken(response.data.token);
-      setUser(normalized);
-      setIsAuthenticated(true);
-
-      Promise.all([
-        AsyncStorage.setItem('authToken', response.data.token),
-        AsyncStorage.setItem('userData', JSON.stringify(normalized)),
-      ]).catch((e) => console.error('AsyncStorage write error:', e));
-
-      socketService.connect();
-
+      const normalized = await establishSession(response.data);
       return { success: true, message: response.message, user: normalized };
     } catch (error) {
       console.error('Google sign-in error:', error);
@@ -259,15 +246,7 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.verifyEmail(email, otp);
 
       if (response.success) {
-        const normalized = normalizeUser(response.data.user);
-        setToken(response.data.token);
-        setUser(normalized);
-        setIsAuthenticated(true);
-
-        Promise.all([
-          AsyncStorage.setItem('authToken', response.data.token),
-          AsyncStorage.setItem('userData', JSON.stringify(normalized)),
-        ]).catch(e => console.error('AsyncStorage write error:', e));
+        await establishSession(response.data);
       }
 
       return response;
@@ -288,11 +267,13 @@ export const AuthProvider = ({ children }) => {
       await unregisterPushNotifications().catch(() => {});
 
       // Tell the server we're signing out, while the Bearer header is still
-      // attached. This is the ONLY thing that (a) adds the token to the Redis
-      // revocation list and (b) closes the LoginSession row so the device
-      // stops showing as "active" in Security → Login Activity. Best-effort:
+      // attached. This (a) adds the access token to the Redis revocation list,
+      // (b) revokes the refresh-token family so it can't re-mint access, and
+      // (c) closes the LoginSession row (Security → Login Activity). Best-effort:
       // an offline sign-out must still clear local state.
-      await authService.logout().catch(() => {});
+      let refreshToken = null;
+      try { refreshToken = await AsyncStorage.getItem('refreshToken'); } catch (_) {}
+      await authService.logout(refreshToken).catch(() => {});
 
       socketService.disconnect();
       await clearAuthData();

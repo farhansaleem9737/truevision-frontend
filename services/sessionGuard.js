@@ -26,6 +26,14 @@
 //     don't retrigger the logout flow (rate-limits log noise + UI churn).
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
+import { API_URL } from './config';
+
+// Storage keys — the ACCESS token keeps the historical 'authToken' key so every
+// existing reader (SocketService, request interceptor, etc.) keeps working; the
+// refresh token lives beside it.
+const ACCESS_KEY  = 'authToken';
+const REFRESH_KEY = 'refreshToken';
 
 // ── Dev-only debug logging (stripped in production by Metro) ────────────────
 // Gated behind __DEV__ so live builds never see any of this. Keep the format
@@ -94,6 +102,68 @@ const isAuthFailure = (status, body) => {
   return LEGACY_AUTH_MESSAGES.some((needle) => msg.includes(needle));
 };
 
+// Only an EXPIRED access token is refreshable. TOKEN_INVALID / USER_NOT_FOUND /
+// TOKEN_NOT_ACTIVE mean the credential is deliberately dead → go straight to
+// logout (no point trying to refresh; the refresh family is revoked too).
+const isRefreshable = (status, body) => status === 401 && body?.code === 'TOKEN_EXPIRED';
+
+// ── Single-flight refresh ────────────────────────────────────────────────────
+// A burst of 401s (parallel requests) must trigger exactly ONE /auth/refresh;
+// all of them await the same promise, then retry with the new token. Uses a
+// BARE fetch (no interceptors) so it can never recurse into itself.
+let refreshPromise = null;
+
+const doRefresh = async () => {
+  const refreshToken = await AsyncStorage.getItem(REFRESH_KEY);
+  if (!refreshToken) { const e = new Error('NO_REFRESH_TOKEN'); e.refreshFailed = true; throw e; }
+
+  const res = await fetch(`${API_URL}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken }),
+  });
+
+  let data = null;
+  try { data = await res.json(); } catch (_) { /* non-JSON */ }
+
+  const newAccess  = data?.data?.token;
+  const newRefresh = data?.data?.refreshToken;
+  if (!res.ok || !data?.success || !newAccess) {
+    const e = new Error(data?.code || `REFRESH_${res.status}`);
+    e.refreshFailed = true;
+    throw e;
+  }
+
+  const pairs = [[ACCESS_KEY, newAccess]];
+  if (newRefresh) pairs.push([REFRESH_KEY, newRefresh]);
+  await AsyncStorage.multiSet(pairs);
+  return newAccess;
+};
+
+const refreshOnce = () => {
+  if (!refreshPromise) {
+    refreshPromise = doRefresh().finally(() => { refreshPromise = null; });
+  }
+  return refreshPromise;
+};
+
+// Purge tokens + broadcast a single logout event. Exposed so the socket layer
+// can trigger the same graceful logout on sessionRevoked / reconnect_failed.
+export const invalidateSession = async (payload = {}) => {
+  try { await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, 'userData']); } catch (_) {}
+  broadcastInvalidation({
+    code:   payload.code   || 'TOKEN_INVALID',
+    reason: payload.reason || 'Session ended',
+  });
+};
+
+/** Proactively refresh the access token (e.g. on app resume). Returns the new
+ *  token, or null if there's nothing to refresh / it failed. Never throws. */
+export const refreshSession = async () => {
+  try { return await refreshOnce(); }
+  catch (_) { return null; }
+};
+
 // ── Request interceptor: attach the newest token every call ─────────────────
 const requestInterceptor = async (config) => {
   let token = null;
@@ -140,19 +210,30 @@ const responseErrorInterceptor = async (error) => {
     );
   }
 
-  if (isAuthFailure(status, body)) {
-    // Purge the bad token *before* broadcasting so any listener that reads
-    // AsyncStorage sees a clean slate.
-    try {
-      await AsyncStorage.multiRemove(['authToken', 'userData']);
-    } catch (_) { /* best-effort */ }
+  const original = error?.config || {};
 
-    broadcastInvalidation({
-      code:   body?.code   || 'TOKEN_INVALID',
-      reason: body?.message || 'Session expired',
-      url:    error?.config?.url,
-      method: error?.config?.method,
-    });
+  // 1) Access token expired → single-flight refresh, then retry ONCE. The
+  //    __isRefreshRetry guard prevents any possibility of a refresh loop.
+  if (isRefreshable(status, body) && !original.__isRefreshRetry) {
+    try {
+      const newToken = await refreshOnce();
+      original.__isRefreshRetry = true;
+      original.headers = original.headers || {};
+      original.headers.Authorization = `Bearer ${newToken}`;
+      // Retry via bare axios so this instance's interceptors don't re-run
+      // (the guard above would stop a loop anyway).
+      return axios(original);
+    } catch (_) {
+      // Refresh failed (no refresh token / rotated-reuse / expired) → the
+      // session is genuinely over. Fall through to graceful logout.
+      await invalidateSession({ code: body?.code || 'TOKEN_EXPIRED', reason: 'Session expired' });
+      return Promise.reject(error);
+    }
+  }
+
+  // 2) Non-refreshable auth failure (invalid / revoked / user-gone) → logout.
+  if (isAuthFailure(status, body)) {
+    await invalidateSession({ code: body?.code, reason: body?.message || 'Session expired' });
   }
 
   return Promise.reject(error);

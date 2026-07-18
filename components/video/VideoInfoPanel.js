@@ -73,6 +73,14 @@ export default function VideoInfoPanel({ visible, onClose, video }) {
   const typeMeta    = type ? TYPE_META[type] : null;
   const creator     = video.userId?.username || video.userId?.fullName || 'Creator';
   const category    = (video.category || 'other').replace(/_/g, ' ');
+
+  // AI pipeline output (populated asynchronously after upload). The BART
+  // zero-shot label is preferred; falls back to the ranking `aiCategory`.
+  const aiClassification = video.transcription?.category || video.aiCategory || null;
+  const infoScore   = Number(video.informativeScore) > 0
+    ? Number(video.informativeScore).toFixed(1)
+    : null;
+  const underReview = video.transcription?.moderation === 'REVIEW';
   const publishDate = fmtDate(video.createdAt);
 
   // Section visibility based on type
@@ -131,6 +139,25 @@ export default function VideoInfoPanel({ visible, onClose, video }) {
                 <Text style={[S.chipText, { color: colors.textMuted, textTransform: 'capitalize' }]}>
                   {category}
                 </Text>
+              </View>
+            ) : null}
+
+            {/* AI classification (Whisper→BART zero-shot). Falls back to the
+                ranking category. Rendered only once the async pipeline fills it. */}
+            {aiClassification ? (
+              <View style={[S.chip, { backgroundColor: colors.surface }]}>
+                <Ionicons name="sparkles-outline" size={13} color={colors.accent} />
+                <Text style={[S.chipText, { color: colors.text, textTransform: 'capitalize' }]}>
+                  AI: {aiClassification}{infoScore ? ` · ${infoScore}` : ''}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Text-moderation verdict from the classifier policy. */}
+            {underReview ? (
+              <View style={[S.chip, { backgroundColor: '#fef3c7' }]}>
+                <Ionicons name="alert-circle-outline" size={13} color="#92400e" />
+                <Text style={[S.chipText, { color: '#92400e' }]}>Under review</Text>
               </View>
             ) : null}
           </View>

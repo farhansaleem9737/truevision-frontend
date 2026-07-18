@@ -1,6 +1,5 @@
 // truevision/services/VideoService.js
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { compressVideo, deleteTempFile } from '../utils/VideoCompressor';
 import { uploadInChunks, getFileSize }   from '../utils/ChunkUploader';
 import { API_URL } from './config';
@@ -362,11 +361,15 @@ const videoService = {
   },
 
   // ── REPOSTS ─────────────────────────────────────────────────────────────────
+  // Uses the guarded `api` instance so a 401 participates in the session-
+  // invalidation flow instead of silently returning an empty list. The reposts
+  // route lives under /users (not this instance's /videos baseURL), so we pass
+  // an ABSOLUTE URL — axios ignores baseURL for it but still runs the auth +
+  // 401 interceptors.
   getUserReposts: async (userId, page = 1, limit = 30) => {
     try {
-      const res = await axios.get(`${API_URL}/users/${userId}/reposts`, {
+      const res = await api.get(`${API_URL}/users/${userId}/reposts`, {
         params: { page, limit },
-        headers: { Authorization: `Bearer ${await AsyncStorage.getItem('authToken')}` },
         timeout: 30000,
       });
       return res.data;

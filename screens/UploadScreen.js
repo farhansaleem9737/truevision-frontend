@@ -137,14 +137,22 @@ export default function UploadScreen({ navigation }) {
       newsFiles:     contentType === 'news' ? newsFiles            : [],
     };
 
-    const res = await videoService.uploadVideo(
-      videoAsset.uri,
-      metadata,
-      (pct) => setProgress(pct),
-    );
-
-    setUploading(false);
-    setProgress(0);
+    let res;
+    try {
+      res = await videoService.uploadVideo(
+        videoAsset.uri,
+        metadata,
+        (pct) => setProgress(pct),
+      );
+    } catch (err) {
+      // Belt-and-suspenders: uploadVideo returns error envelopes, but an
+      // unexpected throw before its own try (e.g. compression) must never
+      // strand the button in a spinning state.
+      res = { success: false, message: err?.message || 'Upload failed unexpectedly.' };
+    } finally {
+      setUploading(false);
+      setProgress(0);
+    }
 
     if (res.success) {
       const m = res.moderation;

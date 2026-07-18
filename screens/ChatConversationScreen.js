@@ -42,7 +42,7 @@ import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, Platform,
   ActivityIndicator, Alert, StatusBar, Keyboard, KeyboardAvoidingView,
-  useWindowDimensions, Animated, Easing, Clipboard as RNClipboard, Modal,
+  useWindowDimensions, Animated, Easing, Clipboard as RNClipboard, Modal, Linking,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -368,8 +368,12 @@ const ReactionsStrip = memo(({ reactions, myId, onToggle, isMine, ct }) => {
 function VoiceMessageBubble({ msg, isMine, ct }) {
   const [sound,   setSound]   = useState(null);
   const [playing, setPlaying] = useState(false);
+  const [loading, setLoading] = useState(false);   // buffering / downloading
+  const [failed,  setFailed]  = useState(false);
   const [posMs,   setPosMs]   = useState(0);
   const [speed,   setSpeed]   = useState(1);   // 1x → 1.5x → 2x cycle
+  const barsWidth = useRef(0);
+  const btnScale  = useRef(new Animated.Value(1)).current;
 
   const total = msg.audioDuration || 0;
   const progress = total > 0 ? Math.min(1, (posMs / 1000) / total) : 0;
@@ -385,24 +389,50 @@ function VoiceMessageBubble({ msg, isMine, ct }) {
 
   useEffect(() => () => { if (sound) sound.unloadAsync(); }, [sound]);
 
+  const bump = () => {
+    Animated.sequence([
+      Animated.timing(btnScale, { toValue: 0.86, duration: 90, useNativeDriver: true }),
+      Animated.spring(btnScale, { toValue: 1, friction: 5, useNativeDriver: true }),
+    ]).start();
+  };
+
+  // Create + cache the Sound once, wiring status updates. Returns it.
+  const ensureSound = async () => {
+    if (sound) return sound;
+    const { sound: s } = await Audio.Sound.createAsync(
+      { uri: msg.audioUrl },
+      { shouldPlay: false, rate: speed, shouldCorrectPitch: true },
+    );
+    s.setOnPlaybackStatusUpdate((st) => {
+      if (!st.isLoaded) {
+        if (st.error) { setFailed(true); setPlaying(false); setLoading(false); }
+        return;
+      }
+      setPosMs(st.positionMillis || 0);
+      setLoading(!!st.isBuffering && st.shouldPlay && !st.isPlaying);
+      if (st.didJustFinish) { setPlaying(false); setPosMs(0); }
+    });
+    setSound(s);
+    return s;
+  };
+
   const togglePlay = async () => {
+    bump();
     try {
+      setFailed(false);
       if (playing) { await sound?.pauseAsync(); setPlaying(false); return; }
       if (!sound) {
-        const { sound: s } = await Audio.Sound.createAsync(
-          { uri: msg.audioUrl },
-          { shouldPlay: true, rate: speed, shouldCorrectPitch: true },
-        );
-        s.setOnPlaybackStatusUpdate((st) => {
-          if (!st.isLoaded) return;
-          setPosMs(st.positionMillis || 0);
-          if (st.didJustFinish) { setPlaying(false); setPosMs(0); }
-        });
-        setSound(s); setPlaying(true);
+        setLoading(true);
+        const s = await ensureSound();
+        await s.playAsync();
+        setLoading(false); setPlaying(true);
       } else {
         await sound.playAsync(); setPlaying(true);
       }
-    } catch (e) { console.warn('voice play', e.message); }
+    } catch (e) {
+      setLoading(false); setPlaying(false); setFailed(true);
+      console.warn('voice play', e.message);
+    }
   };
 
   const cycleSpeed = async () => {
@@ -413,19 +443,43 @@ function VoiceMessageBubble({ msg, isMine, ct }) {
     }
   };
 
+  // Tap anywhere on the waveform to seek to that position.
+  const onSeek = async (e) => {
+    const w = barsWidth.current;
+    if (!w || !total) return;
+    const fraction = Math.max(0, Math.min(1, e.nativeEvent.locationX / w));
+    try {
+      const s = sound || await ensureSound();
+      const ms = fraction * total * 1000;
+      await s.setPositionAsync(ms);
+      setPosMs(ms);
+    } catch (_) { /* seek best-effort */ }
+  };
+
   const barActive = isMine ? '#FFFFFF' : ct.accent;
   const barIdle   = isMine ? 'rgba(255,255,255,0.35)' : ct.dim;
+  const playIcon  = failed ? 'refresh' : playing ? 'pause' : 'play';
 
   return (
     <View style={S.voiceRow}>
-      <TouchableOpacity onPress={togglePlay} style={[S.voicePlay, {
-        backgroundColor: isMine ? 'rgba(255,255,255,0.2)' : ct.accent,
-      }]}>
-        <Ionicons name={playing ? 'pause' : 'play'} size={18} color="#FFFFFF" />
-      </TouchableOpacity>
+      <Animated.View style={{ transform: [{ scale: btnScale }] }}>
+        <TouchableOpacity onPress={togglePlay} activeOpacity={0.85} style={[S.voicePlay, {
+          backgroundColor: isMine ? 'rgba(255,255,255,0.2)' : ct.accent,
+        }]}>
+          {loading
+            ? <ActivityIndicator size="small" color="#FFFFFF" />
+            : <Ionicons name={playIcon} size={18} color="#FFFFFF" />}
+        </TouchableOpacity>
+      </Animated.View>
 
       <View style={S.voiceMid}>
-        <View style={S.voiceBars}>
+        {/* Waveform doubles as a seek bar */}
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={onSeek}
+          onLayout={(e) => { barsWidth.current = e.nativeEvent.layout.width; }}
+          style={S.voiceBars}
+        >
           {bars.slice(0, 30).map((h, i) => (
             <View
               key={i}
@@ -435,18 +489,20 @@ function VoiceMessageBubble({ msg, isMine, ct }) {
               }}
             />
           ))}
-        </View>
+        </TouchableOpacity>
         <Text style={[S.voiceTime, {
           color: isMine ? 'rgba(255,255,255,0.75)' : ct.secondary,
         }]}>
-          {playing || posMs > 0
-            ? formatDuration(Math.max(0, total - posMs / 1000))
-            : formatDuration(total)}
+          {failed
+            ? 'Tap to retry'
+            : (playing || posMs > 0)
+              ? formatDuration(Math.max(0, total - posMs / 1000))
+              : formatDuration(total)}
         </Text>
       </View>
 
       {/* Speed toggle only after user has played once */}
-      {(playing || posMs > 0) && (
+      {(playing || posMs > 0) && !failed && (
         <TouchableOpacity
           onPress={cycleSpeed}
           style={[S.speedBadge, { backgroundColor: isMine ? 'rgba(255,255,255,0.16)' : ct.surface }]}
@@ -460,13 +516,39 @@ function VoiceMessageBubble({ msg, isMine, ct }) {
   );
 }
 
-// ── Image message (shimmer while loading + retry on error) ────────────────
+// ── Image message (shimmer while loading + resilient retry/cache) ─────────
+//
+// Root-cause fixes for "images randomly become 'Couldn't load image'":
+//   1. RESET on uri change — FlatList recycles this component onto new rows;
+//      without this, a recycled row keeps a stale 'error' state.
+//   2. BOUNDED AUTO-RETRY with backoff — a transient network blip no longer
+//      latches permanently; it self-heals before any manual UI appears.
+//   3. CACHE-BUST on retry — expo-image's memory-disk cache stores negative
+//      (failed) results; a plain remount with the same uri just re-serves the
+//      cached failure. Appending ?cb=N forces a fresh network fetch.
+//   4. recyclingKey — tells expo-image which cached entry belongs to this row
+//      during list recycling, preventing flashes of the wrong/failed image.
+//   5. GRACEFUL PLACEHOLDER for non-http (legacy file://) URLs that can never
+//      load — no pointless retry loop.
+const MAX_AUTO_RETRIES = 2;
+
 function ImageMessageBubble({ uri, onPress }) {
-  const [state, setState]   = useState('loading');   // 'loading' | 'ok' | 'error'
+  const isRemote = /^https?:\/\//i.test(uri || '');
+  const [state, setState]   = useState(isRemote ? 'loading' : 'unavailable'); // loading|ok|error|unavailable
   const [attempt, setAttempt] = useState(0);
   const shimmer = useRef(new Animated.Value(0)).current;
+  const autoRetries = useRef(0);
+  const retryTimer  = useRef(null);
 
-  // Shimmer animation loop — runs only while loading to save cycles.
+  // Reset whenever the source changes (row recycling / new message).
+  useEffect(() => {
+    autoRetries.current = 0;
+    setAttempt(0);
+    setState(isRemote ? 'loading' : 'unavailable');
+    return () => clearTimeout(retryTimer.current);
+  }, [uri, isRemote]);
+
+  // Shimmer loop — only while loading to save cycles.
   useEffect(() => {
     if (state !== 'loading') return;
     const loop = Animated.loop(
@@ -479,32 +561,68 @@ function ImageMessageBubble({ uri, onPress }) {
     return () => loop.stop();
   }, [state, shimmer]);
 
-  const retry = () => { setState('loading'); setAttempt((n) => n + 1); };
+  const handleError = () => {
+    if (autoRetries.current < MAX_AUTO_RETRIES) {
+      autoRetries.current += 1;
+      const delay = 700 * autoRetries.current;            // 700ms, 1400ms
+      clearTimeout(retryTimer.current);
+      retryTimer.current = setTimeout(() => {
+        setAttempt((n) => n + 1);
+        setState('loading');
+      }, delay);
+    } else {
+      setState('error');
+    }
+  };
+
+  const manualRetry = () => {
+    autoRetries.current = 0;
+    setAttempt((n) => n + 1);
+    setState('loading');
+  };
+
+  // Cache-bust after the first failure so we bypass any negative cache entry.
+  const source = attempt > 0
+    ? { uri: `${uri}${uri.includes('?') ? '&' : '?'}cb=${attempt}` }
+    : { uri };
+
+  if (state === 'unavailable') {
+    return (
+      <View style={[S.imgWrap, S.imgUnavailable]}>
+        <Ionicons name="image-outline" size={30} color="rgba(255,255,255,0.65)" />
+        <Text style={S.imgErrorTxt}>Photo unavailable</Text>
+      </View>
+    );
+  }
 
   return (
-    <TouchableOpacity activeOpacity={0.92} onPress={onPress} style={S.imgWrap}>
+    <TouchableOpacity
+      activeOpacity={0.92}
+      onPress={state === 'ok' ? onPress : undefined}
+      style={S.imgWrap}
+    >
       <ExpoImage
-        key={`${uri}-${attempt}`}
-        source={{ uri }}
+        source={source}
+        recyclingKey={uri}
         style={S.imgMsg}
         contentFit="cover"
         cachePolicy="memory-disk"
         transition={200}
         onLoad={() => setState('ok')}
-        onError={() => setState('error')}
+        onError={handleError}
       />
 
-      {/* Shimmer overlay */}
+      {/* Shimmer overlay (covers both first load and auto-retry) */}
       {state === 'loading' && (
         <Animated.View style={[S.imgShimmer, { opacity: shimmer }]} />
       )}
 
-      {/* Error / retry overlay */}
+      {/* Manual retry — only after auto-retries are exhausted */}
       {state === 'error' && (
         <View style={S.imgError}>
           <Ionicons name="alert-circle-outline" size={32} color="#FFFFFF" />
           <Text style={S.imgErrorTxt}>Couldn’t load image</Text>
-          <TouchableOpacity onPress={retry} style={S.retryBtn}>
+          <TouchableOpacity onPress={manualRetry} style={S.retryBtn}>
             <Ionicons name="refresh" size={14} color="#FFFFFF" />
             <Text style={S.retryBtnTxt}>Retry</Text>
           </TouchableOpacity>
@@ -560,7 +678,10 @@ const DocumentMessageBubble = memo(({ msg, isMine, ct }) => {
           {ext || 'FILE'} · {formatBytes(msg.documentSize) || '—'}
         </Text>
       </View>
-      <TouchableOpacity style={[S.docDl, { backgroundColor: isMine ? 'rgba(255,255,255,0.16)' : ct.surface }]}>
+      <TouchableOpacity
+        onPress={() => msg.documentUrl && Linking.openURL(msg.documentUrl).catch(() =>
+          Alert.alert('Could not open', 'This document link is unavailable.'))}
+        style={[S.docDl, { backgroundColor: isMine ? 'rgba(255,255,255,0.16)' : ct.surface }]}>
         <Ionicons name="download-outline" size={18} color={isMine ? '#FFFFFF' : ct.primary} />
       </TouchableOpacity>
     </View>
@@ -832,8 +953,23 @@ export default function ChatConversationScreen({ route, navigation }) {
     const res = await chatService.getMessages(chatId, { page: p });
     if (res.success) {
       const reversed = [...(res.messages || [])].reverse();
-      if (append) setMessages((prev) => [...prev, ...reversed]);
-      else        setMessages(reversed);
+      if (append) {
+        setMessages((prev) => [...prev, ...reversed]);
+      } else {
+        // MERGE-BY-_id instead of wholesale replace: a page-1 reload after a
+        // send must not drop optimistic / just-arrived socket messages that
+        // fall outside the server's page-1 window (the "appear → vanish →
+        // reappear" flicker). Union by _id, then order newest-first to match
+        // the inverted list + prepend-on-newMessage convention.
+        setMessages((prev) => {
+          const serverIds = new Set(reversed.map((m) => m._id));
+          const localExtras = prev.filter((m) => !serverIds.has(m._id));
+          const seen = new Set();
+          return [...reversed, ...localExtras]
+            .filter((m) => (seen.has(m._id) ? false : (seen.add(m._id), true)))
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        });
+      }
       setHasMore(res.hasMore);
       setPage(p);
     }
@@ -861,7 +997,14 @@ export default function ChatConversationScreen({ route, navigation }) {
       }),
       socketService.on('messageSeen', ({ chatId: c }) => {
         if (c !== chatId) return;
-        setMessages((prev) => prev.map((m) => ({ ...m, status: 'seen', seen: true })));
+        // Only MY messages transition to 'seen' (the peer saw them). Never flip
+        // the other user's messages — you can't "see"-tick their bubbles.
+        setMessages((prev) => prev.map((m) => {
+          const senderId = m.senderId?._id || m.senderId;
+          return String(senderId) === String(me?._id)
+            ? { ...m, status: 'seen', seen: true }
+            : m;
+        }));
       }),
       socketService.on('messageDelivered', ({ chatId: c, messageId }) => {
         if (c !== chatId) return;
@@ -1941,6 +2084,7 @@ const S = StyleSheet.create({
   imgMsg:    { width: '100%', height: '100%' },
   imgShimmer:{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.08)' },
   imgError:  { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(15,23,42,0.55)' },
+  imgUnavailable: { alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(15,23,42,0.35)' },
   imgErrorTxt:{ color: '#FFFFFF', fontSize: 13, marginTop: 6 },
   retryBtn:  {
     marginTop: 10, flexDirection: 'row', alignItems: 'center',

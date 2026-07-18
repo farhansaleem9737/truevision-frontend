@@ -61,9 +61,11 @@ const authService = {
   // closes the LoginSession row (so the device stops showing as active in
   // Security → Login Activity). Must be called while the Bearer header is
   // still attached — i.e. BEFORE clearing AsyncStorage.
-  logout: async () => {
+  // Pass the refresh token so the server revokes its whole family (otherwise a
+  // leaked refresh token could keep minting access after logout).
+  logout: async (refreshToken) => {
     try {
-      const response = await api.post('/logout');
+      const response = await api.post('/logout', refreshToken ? { refreshToken } : {});
       return response.data;
     } catch (error) {
       return error.response?.data || { success: false, message: 'Network error' };

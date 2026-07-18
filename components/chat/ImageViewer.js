@@ -45,6 +45,7 @@ export default function ImageViewer({
 }) {
   const [index, setIndex]           = useState(initialIndex);
   const [controlsHidden, setHidden] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   // Animated values driving the transform on the active image.
   const scale       = useRef(new Animated.Value(1)).current;
@@ -59,12 +60,13 @@ export default function ImageViewer({
 
   const src = images[index];
 
-  // Reset transforms when the current image changes.
+  // Reset transforms + error state when the current image changes.
   useEffect(() => {
     scale.setValue(1);        baseScale.current = 1;
     translateX.setValue(0);
     translateY.setValue(0);
     backdropOp.setValue(1);
+    setLoadFailed(false);
   }, [index, backdropOp, scale, translateX, translateY]);
 
   // ── Pinch ──────────────────────────────────────────────────────────────
@@ -187,8 +189,17 @@ export default function ImageViewer({
                             source={{ uri: src.url }}
                             style={{ width: SCREEN_W, height: SCREEN_H * 0.9 }}
                             contentFit="contain"
+                            cachePolicy="memory-disk"
                             transition={100}
+                            onLoad={() => setLoadFailed(false)}
+                            onError={() => setLoadFailed(true)}
                           />
+                          {loadFailed && (
+                            <View style={V.viewerError}>
+                              <Ionicons name="alert-circle-outline" size={40} color="rgba(255,255,255,0.9)" />
+                              <Text style={V.viewerErrorTxt}>Couldn’t load image</Text>
+                            </View>
+                          )}
                         </Animated.View>
                       ) : null}
                     </Animated.View>
@@ -233,6 +244,8 @@ const V = StyleSheet.create({
   backdrop:   { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
   container:  { flex: 1, alignItems: 'center', justifyContent: 'center' },
   imageWrap:  { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  viewerError:    { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  viewerErrorTxt: { color: 'rgba(255,255,255,0.9)', fontSize: 14, marginTop: 8 },
 
   topBar:     {
     position: 'absolute', top: Platform.OS === 'ios' ? 48 : 24,
