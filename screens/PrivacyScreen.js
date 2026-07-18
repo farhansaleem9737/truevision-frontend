@@ -1,81 +1,74 @@
 // truevision/screens/PrivacyScreen.js
-import { Alert, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 import ScreenHeader from '../components/settings/ScreenHeader';
 import { Section, SettingsRow, SwitchRow } from '../components/settings/SettingsRow';
 import usePreferences from '../hooks/usePreferences';
 import { useTheme } from '../context/ThemeContext';
 
-const audienceLabel = (key) => ({
-  everyone: 'Everyone',
-  followers: 'Followers',
-  nobody:   'Nobody',
-}[key] || key);
-
-const cycleAudience = (current) => {
-  const order = ['everyone', 'followers', 'nobody'];
-  return order[(order.indexOf(current) + 1) % order.length];
-};
-
 export default function PrivacyScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const { prefs, setPath } = usePreferences();
   const p = prefs.privacy;
 
-  const cycle = (key) => setPath(`privacy.${key}`, cycleAudience(p[key]));
+  // Audience enum → localized label. Unknown values fall back to the raw key.
+  const audienceLabel = (key) =>
+    t(`privacy.audience.${key}`, { defaultValue: key });
 
   return (
     <View style={[S.root, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
       <StatusBar barStyle={colors.statusBarStyle} backgroundColor={colors.bg} />
-      <ScreenHeader title="Privacy" onBack={() => navigation.goBack()} />
+      <ScreenHeader title={t('privacy.title')} onBack={() => navigation.goBack()} />
 
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }} showsVerticalScrollIndicator={false}>
-        <Section title="Account" footer="When private, only approved followers can see your videos.">
+        <Section title={t('privacy.account')} footer={t('privacy.accountFooter')}>
           <SwitchRow
-            icon="lock-closed-outline" label="Private Account"
+            icon="lock-closed-outline" label={t('privacy.privateAccount')}
             value={p.privateAccount}
             onValueChange={(v) => setPath('privacy.privateAccount', v)}
           />
           <SwitchRow
-            icon="eye-off-outline" label="Hide Online Status"
-            sub="Others can't see when you're active"
+            icon="eye-off-outline" label={t('privacy.hideOnline')}
+            sub={t('privacy.hideOnlineSub')}
             value={p.hideOnlineStatus}
             onValueChange={(v) => setPath('privacy.hideOnlineStatus', v)}
           />
           <SwitchRow
-            icon="people-outline" label="Hide Followers List"
+            icon="people-outline" label={t('privacy.hideFollowers')}
             value={p.hideFollowers}
             onValueChange={(v) => setPath('privacy.hideFollowers', v)}
             last
           />
         </Section>
 
-        <Section title="Interactions">
+        <Section title={t('privacy.interactions')}>
           <SettingsRow
-            icon="chatbox-outline" label="Who can message me"
+            icon="chatbox-outline" label={t('privacy.whoCanMessage')}
             sub={audienceLabel(p.whoCanMessage)}
-            onPress={() => cycle('whoCanMessage')}
+            onPress={() => navigation.navigate('AudienceSetting', { kind: 'whoCanMessage' })}
           />
           <SettingsRow
-            icon="chatbubble-ellipses-outline" label="Who can comment"
+            icon="chatbubble-ellipses-outline" label={t('privacy.whoCanComment')}
             sub={audienceLabel(p.whoCanComment)}
-            onPress={() => cycle('whoCanComment')}
+            onPress={() => navigation.navigate('AudienceSetting', { kind: 'whoCanComment' })}
             last
           />
         </Section>
 
-        <Section title="Blocked">
+        <Section title={t('privacy.blocked')}>
           <SettingsRow
-            icon="ban-outline" label="Blocked Users"
-            sub="Manage people you've blocked"
-            onPress={() => Alert.alert('Blocked Users', 'No blocked users yet. Block management is coming soon.')}
+            icon="ban-outline" label={t('privacy.blockedUsers')}
+            sub={t('privacy.blockedUsersSub')}
+            onPress={() => navigation.navigate('BlockedUsers')}
             last
           />
         </Section>
 
-        <Text style={S.note}>
-          Your changes save automatically.
+        <Text style={[S.note, { color: colors.textDim }]}>
+          {t('privacy.note')}
         </Text>
       </ScrollView>
     </View>
@@ -83,6 +76,6 @@ export default function PrivacyScreen({ navigation }) {
 }
 
 const S = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#f8fafc' },
-  note: { color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 22 },
+  root: { flex: 1 },
+  note: { fontSize: 12, textAlign: 'center', marginTop: 22 },
 });

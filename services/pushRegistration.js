@@ -56,6 +56,18 @@ const configureNotifications = () => {
       showBadge:       true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     }).catch(() => {});
+
+    // Social channel — likes, comments, follows, mentions, app updates.
+    // The backend targets channelId 'social' for those pushes; without the
+    // channel existing on-device Android downgrades or drops them.
+    Notifications.setNotificationChannelAsync('social', {
+      name:            'Social Activity',
+      importance:      Notifications.AndroidImportance.HIGH,
+      vibrationPattern:[0, 200],
+      lightColor:      '#3B82F6',
+      sound:           'default',
+      showBadge:       true,
+    }).catch(() => {});
   }
 };
 

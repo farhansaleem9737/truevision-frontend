@@ -17,7 +17,18 @@ import { Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useTranslation } from 'react-i18next';
 import { useTheme }    from '../context/ThemeContext';
+
+// Maps each tab route to its translation key. Labels are visually hidden
+// (tabBarShowLabel: false) but exposed to screen readers via a11y labels.
+const TAB_LABEL_KEYS = {
+  Home:     'tabs.home',
+  Discover: 'tabs.discover',
+  Upload:   'tabs.create',
+  Chat:     'tabs.chats',
+  Profile:  'tabs.profile',
+};
 
 // Screens
 import HomeScreen       from '../screens/HomeScreen';
@@ -90,11 +101,13 @@ const TabIcon = ({ name, focused, isUpload, colors }) => {
 export default function BottomTabNavigator() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const { t } = useTranslation();
 
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
+        tabBarAccessibilityLabel: t(TAB_LABEL_KEYS[route.name] || 'tabs.home'),
         tabBarIcon: ({ focused }) => {
           let iconName;
           let isUpload = false;

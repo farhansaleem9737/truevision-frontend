@@ -1,7 +1,7 @@
 // truevision/components/comments/CommentsSheet.js
 //
-// Instagram-style comment sheet backed by Firestore.
-//   • real-time updates via onSnapshot
+// Instagram-style comment sheet backed by the Express/Mongo comments API
+// (near-real-time via CommentsService's polling subscribe()).
 //   • long-press own comment → Edit / Delete / Cancel action sheet
 //   • edit modal (pre-filled, char-limited, save disabled when empty/unchanged)
 //   • delete confirmation Alert
@@ -215,6 +215,10 @@ export default function CommentsSheet({
   videoId,
   commentCount = 0,
   isExternal = false,
+  // Passed from the caller (ReelCard / VideoPlayerScreen). When false, the
+  // input is disabled and a "Comments are turned off" chip replaces it.
+  // Defaults to true so existing callers that don't pass it keep working.
+  allowComments = true,
   tabOffset = 0,
   onCountChange,
 }) {
@@ -275,6 +279,10 @@ export default function CommentsSheet({
       setText('');
       Haptics.selectionAsync().catch(() => {});
     } catch (e) {
+      // Server-enforced privacy rejections (403 COMMENTS_NOT_ALLOWED /
+      // ACCOUNT_PRIVATE) arrive here with the backend's human-readable
+      // message — show it verbatim so the user knows why. The composed
+      // text is intentionally kept in the input.
       Alert.alert('Could not post', e.message || 'Try again');
     } finally {
       setPosting(false);
@@ -305,11 +313,22 @@ export default function CommentsSheet({
       setEditFor(null);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     } catch (e) {
-      Alert.alert('Could not save', e.message || 'Try again');
+      // sessionGuard already purged AsyncStorage and AuthContext is about to
+      // route the user to the login screen — surface a matching message so
+      // the "Could not save" title doesn't misdirect the user's attention.
+      // Backend can send five distinct auth-fail messages (see Auth.js),
+      // hence the wide regex. Update alongside sessionGuard.LEGACY_AUTH_MESSAGES.
+      const msg = String(e?.message || '');
+      if (/sign in again|session expired|not authorized|user not found|invalid token/i.test(msg)) {
+        Alert.alert('Session expired', 'Please sign in again to keep editing.');
+        setEditFor(null);
+      } else {
+        Alert.alert('Could not save', msg || 'Try again');
+      }
     } finally {
       setEditing(false);
     }
-  }, [editFor, user]);
+  }, [editFor, user, videoId]);
 
   const confirmDelete = useCallback(() => {
     if (!actionFor) return;
@@ -339,9 +358,12 @@ export default function CommentsSheet({
   }, [actionFor]);
 
   // ── Derived ──────────────────────────────────────────────────────────────
-  const trimmed = text.trim();
-  const canPost = trimmed.length > 0 && !isExternal && !posting && trimmed.length <= MAX_LEN;
+  const trimmed   = text.trim();
+  // canPost is additionally gated on allowComments: even if the backend
+  // returns 403 on POST we want the input to look disabled first.
+  const canPost   = trimmed.length > 0 && !isExternal && !posting && allowComments && trimmed.length <= MAX_LEN;
   const remaining = MAX_LEN - text.length;
+  const commentsDisabled = !isExternal && !allowComments;
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -419,6 +441,15 @@ export default function CommentsSheet({
               backgroundColor: colors.card,
             },
           ]}>
+            {commentsDisabled ? (
+              // Owner turned off commenting. Replace the input with a chip.
+              <View style={[S.cInputBox, { backgroundColor: colors.surface, justifyContent: 'center' }]}>
+                <Ionicons name="chatbubble-outline" size={16} color={colors.textDim} />
+                <Text style={{ marginLeft: 8, color: colors.textDim, fontSize: 13, fontWeight: '600' }}>
+                  Comments are turned off
+                </Text>
+              </View>
+            ) : (
             <View style={[S.cInputBox, { backgroundColor: colors.surface }]}>
               <TextInput
                 value={text}
@@ -453,6 +484,7 @@ export default function CommentsSheet({
                 </TouchableOpacity>
               )}
             </View>
+            )}
           </View>
         </KeyboardAvoidingView>
       </Animated.View>

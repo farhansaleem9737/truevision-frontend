@@ -129,6 +129,7 @@ export default function ReelsFeedScreen({ navigation, route }) {
         videoId={activeItem?._id || activeItem?.id}
         commentCount={activeItem?.commentsCount ?? activeItem?.comments ?? 0}
         isExternal={!!activeItem?.source && activeItem.source !== 'truevision'}
+        allowComments={activeItem?.allowComments !== false}
         tabOffset={tabOffset}
       />
     </View>

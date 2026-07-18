@@ -123,10 +123,18 @@ export default function ActionButtons({
   avatarName,
   likes, comments, shares, saves, reposts,
   isLiked, isSaved, isReposted,
+  // Hide-count props: when the owner has toggled Hide Like Count / Hide
+  // Share Count, non-owner viewers see a small chip label instead of a
+  // number. The owner always sees the real count.
+  isOwner        = false,
+  hideLikeCount  = false,
+  hideShareCount = false,
   onLike, onComment, onShare, onSave, onRepost, onMore,
   onAvatarPress,
   style,
 }) {
+  const likeLabel  = (!isOwner && hideLikeCount)  ? 'Liked' : fmt(likes);
+  const shareLabel = (!isOwner && hideShareCount) ? 'Shared' : fmt(shares);
   return (
     <View style={[S.col, style]}>
       {/* User avatar — falls back to initial circle when no image is provided */}
@@ -143,10 +151,10 @@ export default function ActionButtons({
         </View>
       </TouchableOpacity>
 
-      {/* Like */}
-      <ActionBtn
+      {/* Like — count replaced with "Liked" label when hidden and viewer isn't owner */}
+      <ActionBtnWithLabel
         name="heart-outline" activeName="heart"
-        count={likes} active={isLiked}
+        label={likeLabel} active={isLiked}
         activeColor="#ff2d55"
         onPress={onLike}
         size={28}
@@ -160,10 +168,10 @@ export default function ActionButtons({
         size={26}
       />
 
-      {/* Share */}
-      <ActionBtn
+      {/* Share — count replaced with "Shared" label when hidden */}
+      <ActionBtnWithLabel
         name="paper-plane-outline"
-        count={shares}
+        label={shareLabel}
         onPress={onShare}
         size={25}
       />
@@ -187,6 +195,36 @@ export default function ActionButtons({
     </View>
   );
 }
+
+// Variant of ActionBtn that accepts an already-formatted label (string) so
+// we can show "Liked" / "Shared" instead of a number when the owner has
+// hidden the count. Keeps the tap animation identical to ActionBtn.
+const ActionBtnWithLabel = ({ name, activeName, label, active, color, activeColor, onPress, size = 26 }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+  const handlePress = useCallback(() => {
+    Animated.sequence([
+      Animated.spring(scale, { toValue: 1.35, useNativeDriver: true, friction: 4 }),
+      Animated.spring(scale, { toValue: 1,    useNativeDriver: true }),
+    ]).start();
+    onPress?.();
+  }, [onPress]);
+  return (
+    <TouchableOpacity onPress={handlePress} activeOpacity={0.7} style={S.btn}>
+      <Animated.View style={{ transform: [{ scale }] }}>
+        <Ionicons
+          name={active ? (activeName || name) : name}
+          size={size}
+          color={active ? (activeColor || '#fff') : (color || '#fff')}
+        />
+      </Animated.View>
+      {label !== undefined && (
+        <Text style={[S.count, active && activeColor && { color: activeColor }]}>
+          {label}
+        </Text>
+      )}
+    </TouchableOpacity>
+  );
+};
 
 const S = StyleSheet.create({
   col: {

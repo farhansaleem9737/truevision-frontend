@@ -25,6 +25,8 @@ import ReelCard                  from '../components/reel/ReelCard';
 import CommentsSheet             from '../components/comments/CommentsSheet';
 import videoService              from '../services/VideoService';
 import pixabayService            from '../services/pixabayService';
+import usePreferences            from '../hooks/usePreferences';
+import { onFeedRefresh }         from '../services/feedEvents';
 
 const { height } = Dimensions.get('window');
 const TAB_BAR_BASE = 65;
@@ -73,6 +75,9 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
 
   const isFocused = useIsFocused();
+  const { prefs } = usePreferences();
+  // Personalized "For You" when enabled; generic trending otherwise (spec).
+  const feedSort = prefs?.content?.personalizedRecs !== false ? 'foryou' : 'trending';
 
   const [activeTab,    setActiveTab]    = useState('trending');
   const [activeIndex,  setActiveIndex]  = useState(0);
@@ -92,9 +97,9 @@ export default function HomeScreen() {
 
   // ── Load TRENDING feed: own (sort=trending) + curated Pixabay, interleaved ──
   const loadTrending = useCallback(async () => {
-    console.log('[HomeScreen] loading trending feed (own + pixabay)…');
+    console.log(`[HomeScreen] loading feed (sort=${feedSort}) + pixabay…`);
     const [ownRes, pxRes] = await Promise.all([
-      videoService.getFeed(1, 8, 'trending'),
+      videoService.getFeed(1, 8, feedSort),
       pixabayService.getInformativeFeed(1),
     ]);
 
@@ -113,7 +118,7 @@ export default function HomeScreen() {
     setExternalHasMore(pxRes.hasMore !== false);
     setExternalError(pxRes.success ? null : (pxRes.error || 'Could not load curated feed'));
     setActiveIndex(0);
-  }, []);
+  }, [feedSort]);
 
   // ── Load more pages — only external (own videos already loaded once) ────
   const loadMoreExternal = useCallback(async () => {
@@ -162,6 +167,19 @@ export default function HomeScreen() {
       }
     }, [activeTab, feed.length, loading, loadTrending]),
   );
+
+  // Auto-refresh when the user changes a recommendation setting elsewhere.
+  // usePreferences fires this ONLY after the backend confirmed success (and
+  // therefore already cleared this user's feed cache), so the refetch below is
+  // guaranteed to return fresh recommendations — no manual pull-to-refresh.
+  useEffect(() => {
+    const off = onFeedRefresh(() => {
+      if (activeTab !== 'trending') return;
+      setLoading(true);
+      loadTrending().finally(() => setLoading(false));
+    });
+    return off;
+  }, [activeTab, loadTrending]);
 
   const onRefresh = useCallback(async () => {
     if (activeTab !== 'trending') return;
@@ -291,6 +309,7 @@ export default function HomeScreen() {
         videoId={activeItem?._id || activeItem?.id}
         commentCount={activeItem?.commentsCount ?? activeItem?.comments ?? 0}
         isExternal={!!activeItem?.source && activeItem.source !== 'truevision'}
+        allowComments={activeItem?.allowComments !== false}
         tabOffset={tabOffset}
       />
     </View>

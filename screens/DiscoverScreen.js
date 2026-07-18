@@ -29,6 +29,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { Ionicons }          from '@expo/vector-icons';
 import videoService          from '../services/VideoService';
 import userService           from '../services/UserService';
+import activityService       from '../services/ActivityService';
 import { useTheme }          from '../context/ThemeContext';
 import SearchTabs            from '../components/discover/SearchTabs';
 import UserResultRow         from '../components/discover/UserResultRow';
@@ -102,7 +103,7 @@ const ExploreTile = ({ video, onPress }) => (
 const SkeletonTile = () => <View style={[S.tile, S.skeleton]} />;
 
 // ─── Main ────────────────────────────────────────────────────────────────────
-export default function DiscoverScreen({ navigation }) {
+export default function DiscoverScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
@@ -125,6 +126,11 @@ export default function DiscoverScreen({ navigation }) {
 
   const [recent, setRecent] = useState([]);
   useEffect(() => { getRecentSearches().then(setRecent); }, []);
+
+  // Server-backed recent searches (/api/activity/search-history). Shown when
+  // the search input is focused & empty; the AsyncStorage list above is only
+  // a fallback when the server has nothing (offline / brand-new account).
+  const [serverRecent, setServerRecent] = useState([]);
 
   const searchTimer = useRef(null);
 
@@ -193,6 +199,47 @@ export default function DiscoverScreen({ navigation }) {
     searchTimer.current = setTimeout(() => doSearch(text, 1, true), 500);
   };
 
+  // Explicit submit (keyboard "search" key) — run immediately and record the
+  // query in the server-side search history. Fire-and-forget: history is a
+  // nicety, search results must never wait on it.
+  const handleSearchSubmit = () => {
+    const q = searchQuery.trim();
+    if (!q) return;
+    clearTimeout(searchTimer.current);
+    setIsSearchMode(true);
+    setSearchTab('top');
+    doSearch(q, 1, true);
+    activityService.recordSearch(q);
+  };
+
+  // Deep link from SearchHistoryScreen (Activity → Search History → row tap):
+  // DiscoverMain receives { initialQuery, searchTs } and re-runs the query.
+  // Keyed on searchTs so tapping the same query twice still re-fires.
+  useEffect(() => {
+    const q = (route?.params?.initialQuery || '').trim();
+    if (!q) return;
+    setSearchQuery(q);
+    setIsSearchMode(true);
+    setSearchTab('top');
+    clearTimeout(searchTimer.current);
+    doSearch(q, 1, true);
+    activityService.recordSearch(q);
+    navigation.setParams({ initialQuery: undefined, searchTs: undefined });
+    // eslint-disable-next-line
+  }, [route?.params?.searchTs]);
+
+  // Refresh the server-backed recent list whenever the (empty) search input
+  // gains focus, so freshly recorded queries show up immediately.
+  useEffect(() => {
+    if (!searchFocused || searchQuery.trim()) return;
+    let alive = true;
+    activityService.getSearchHistory(10).then((res) => {
+      if (alive && res?.success) setServerRecent(res.items || []);
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line
+  }, [searchFocused]);
+
   // Persist successful searches
   useEffect(() => {
     if (!isSearchMode || !searchQuery.trim()) return;
@@ -227,10 +274,25 @@ export default function DiscoverScreen({ navigation }) {
   const pickRecent = (q) => {
     setSearchQuery(q); setIsSearchMode(true); setSearchTab('top');
     Keyboard.dismiss();
+    clearTimeout(searchTimer.current);
     doSearch(q, 1, true);
+    activityService.recordSearch(q); // fire-and-forget — bumps recency
   };
   const removeOneRecent = async (q) => { await removeRecentSearch(q); setRecent(await getRecentSearches()); };
   const clearAllRecent  = async () => { await clearRecentSearches(); setRecent([]); };
+
+  // Server-backed recent rows: optimistic removal, fire-and-forget delete.
+  const removeServerRecent = (id) => {
+    setServerRecent((prev) => prev.filter((r) => r._id !== id));
+    activityService.deleteSearch(id);
+  };
+  const clearServerRecent = () => {
+    setServerRecent([]);
+    activityService.clearSearches();
+    // Keep the local AsyncStorage mirror consistent with the user's intent.
+    clearRecentSearches();
+    setRecent([]);
+  };
 
   // ── Renderers ───────────────────────────────────────────────────────────
   const renderItem = useCallback(({ item, index }) => (
@@ -255,6 +317,7 @@ export default function DiscoverScreen({ navigation }) {
           placeholderTextColor={colors.textDim}
           value={searchQuery}
           onChangeText={handleSearchChange}
+          onSubmitEditing={handleSearchSubmit}
           onFocus={() => setSearchFocused(true)}
           onBlur={() => setSearchFocused(false)}
           style={[S.searchInput, { color: colors.text }]}
@@ -300,17 +363,47 @@ export default function DiscoverScreen({ navigation }) {
     </View>
   );
 
+  // Server-backed "Recent" section — clock-icon rows, X to delete, Clear all.
+  const renderServerRecent = () => (
+    <View style={S.recentWrap}>
+      <View style={S.recentHeader}>
+        <Text style={[S.recentTitle, { color: colors.text }]}>Recent</Text>
+        <TouchableOpacity onPress={clearServerRecent} hitSlop={S.hit}>
+          <Text style={[S.recentClear, { color: colors.accent }]}>Clear all</Text>
+        </TouchableOpacity>
+      </View>
+      {serverRecent.map((r) => (
+        <TouchableOpacity
+          key={r._id}
+          onPress={() => pickRecent(r.query)}
+          activeOpacity={0.6}
+          style={S.recentRow}
+        >
+          <View style={[S.recentIconWrap, { backgroundColor: colors.iconChipBg }]}>
+            <Ionicons name="time-outline" size={18} color={colors.textMuted} />
+          </View>
+          <Text style={[S.recentQuery, { color: colors.text }]} numberOfLines={1}>{r.query}</Text>
+          <TouchableOpacity onPress={() => removeServerRecent(r._id)} hitSlop={S.hit} style={S.recentRemove}>
+            <Ionicons name="close" size={16} color={colors.textDim} />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
   // Body — Recent / Search-tabs / Browse-grid
   const renderBody = () => {
-    if (searchFocused && !searchQuery.trim() && recent.length > 0) {
+    if (searchFocused && !searchQuery.trim() && (serverRecent.length > 0 || recent.length > 0)) {
       return (
         <ScrollView keyboardShouldPersistTaps="handled">
-          <RecentSearches
-            items={recent}
-            onPick={pickRecent}
-            onRemove={removeOneRecent}
-            onClearAll={clearAllRecent}
-          />
+          {serverRecent.length > 0 ? renderServerRecent() : (
+            <RecentSearches
+              items={recent}
+              onPick={pickRecent}
+              onRemove={removeOneRecent}
+              onClearAll={clearAllRecent}
+            />
+          )}
         </ScrollView>
       );
     }
@@ -388,7 +481,9 @@ export default function DiscoverScreen({ navigation }) {
     <FlatList
       data={searchUsers}
       keyExtractor={(it) => it._id}
-      renderItem={({ item }) => <UserResultRow user={item} />}
+      renderItem={({ item }) => (
+        <UserResultRow user={item} onPress={(u) => navigation.navigate('UserProfile', { userId: u._id })} />
+      )}
       ItemSeparatorComponent={() => <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: '#f1f5f9', marginLeft: 78 }} />}
       ListEmptyComponent={!searchLoading ? <Empty label="No users found" /> : null}
       keyboardShouldPersistTaps="handled"
@@ -423,7 +518,10 @@ export default function DiscoverScreen({ navigation }) {
         {topUsers.length > 0 && (
           <View>
             <Section>People</Section>
-            {topUsers.map((u) => <UserResultRow key={u._id} user={u} />)}
+            {topUsers.map((u) => (
+              <UserResultRow key={u._id} user={u}
+                onPress={(usr) => navigation.navigate('UserProfile', { userId: usr._id })} />
+            ))}
           </View>
         )}
         {topHashtags.length > 0 && (
@@ -538,6 +636,26 @@ const S = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 2,
   },
   viewsText: { color: '#fff', fontSize: 10.5, fontWeight: '700', marginLeft: 4 },
+
+  // Server-backed "Recent" searches (focused + empty input)
+  recentWrap:   { paddingTop: 4, paddingBottom: 14 },
+  recentHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 12,
+  },
+  recentTitle: { fontSize: 14, fontWeight: '800' },
+  recentClear: { fontSize: 13, fontWeight: '700' },
+  recentRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 11, paddingHorizontal: 16,
+  },
+  recentIconWrap: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: 12,
+  },
+  recentQuery:  { flex: 1, fontSize: 14.5 },
+  recentRemove: { padding: 6 },
 
   // Empty state
   empty:      { alignItems: 'center', paddingVertical: 70, paddingHorizontal: 30 },

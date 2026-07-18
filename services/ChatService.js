@@ -8,21 +8,16 @@
 // idempotent by design (send, react — server uses clientMsgId / toggle).
 
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from './config';
+import { attachSessionGuard } from './sessionGuard';
 
 const BASE_URL = API_URL;
 
 const api       = axios.create({ baseURL: BASE_URL, timeout: 15000 });
 const uploadApi = axios.create({ baseURL: BASE_URL, timeout: 60000 });
 
-const attachAuth = async (config) => {
-  const token = await AsyncStorage.getItem('authToken');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-};
-api.interceptors.request.use(attachAuth);
-uploadApi.interceptors.request.use(attachAuth);
+attachSessionGuard(api);
+attachSessionGuard(uploadApi);
 
 // ── Cloudinary direct-upload helper (used by image/voice/document/gif) ────
 //   Two-step: (1) fetch signed params from our backend, (2) POST bytes to

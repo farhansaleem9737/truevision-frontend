@@ -67,12 +67,18 @@ export default function LoginScreen({ navigation }) {
     (async () => {
       const result = await googleSignIn(idToken);
       setGoogleLoading(false);
-      if (!result.success) {
+      if (result.requires2FA) {
+        // 2FA-enabled account — Google gets the same OTP gate as a password.
+        navigation.navigate('TwoFactorLogin', {
+          pendingToken: result.pendingToken,
+          email:        result.email,
+        });
+      } else if (!result.success) {
         Alert.alert('Sign-in failed', result.message || 'Could not sign in with Google.');
       }
       // On success, AuthContext flips isAuthenticated and App.js swaps stacks.
     })();
-  }, [googleResponse, googleSignIn]);
+  }, [googleResponse, googleSignIn, navigation]);
 
   const handleGoogleSignIn = async () => {
     // Surface "not configured" before opening the browser if all client IDs
@@ -142,6 +148,12 @@ export default function LoginScreen({ navigation }) {
       if (result.success) {
         // Navigation happens automatically — AuthContext sets isAuthenticated = true
         // and App.js switches to AppStack. No alert needed.
+      } else if (result.requires2FA) {
+        // Password accepted — the account wants the emailed 6-digit code.
+        navigation.navigate('TwoFactorLogin', {
+          pendingToken: result.pendingToken,
+          email:        result.email,
+        });
       } else {
         if (result.requiresVerification) {
           Alert.alert(

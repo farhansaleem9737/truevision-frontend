@@ -380,6 +380,8 @@ export default function ChatScreen() {
         chatId: res.chat._id,
         otherUser: res.chat.otherUser,
       });
+    } else {
+      Alert.alert('Message', res?.message || "This user isn't accepting messages.");
     }
   }, [navigation]);
 

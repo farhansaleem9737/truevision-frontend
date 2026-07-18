@@ -14,8 +14,9 @@ import { LinearGradient }            from 'expo-linear-gradient';
 import { Ionicons }                  from '@expo/vector-icons';
 import Slider                        from '@react-native-community/slider';
 import { useSafeAreaInsets }         from 'react-native-safe-area-context';
-import { useIsFocused }              from '@react-navigation/native';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
 import videoService                  from '../services/VideoService';
+import userService                   from '../services/UserService';
 import { useAuth }                   from '../context/AuthContext';
 import CommentsSheet                 from '../components/comments/CommentsSheet';
 import InfoButton                    from '../components/video/InfoButton';
@@ -231,7 +232,12 @@ const SongTicker = ({ song }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SINGLE VIDEO ITEM
 // ─────────────────────────────────────────────────────────────────────────────
-const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset, onMore, resumePosition = 0 }) => {
+const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset, onMore }) => {
+  const navigation = useNavigation();
+  const { user: authUser } = useAuth();
+
+  // The signed-in user never sees a Follow button on their own videos.
+  const isSelf = !!(authUser?._id && item.ownerId && String(item.ownerId) === String(authUser._id));
 
   // ── expo-video player ─────────────────────────────────────────────────────
   const player = useVideoPlayer(item.uri, (p) => {
@@ -244,30 +250,16 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
   const [duration,    setDuration]    = useState(0);
   const [isReady,     setIsReady]     = useState(false);
 
-  // Resume-from-position runs exactly once on the first readyToPlay event.
-  // Coming from Watch History, the screen passes the saved lastPlaybackPosition;
-  // any other entry point passes 0 and the seek is a no-op.
-  const resumeApplied = useRef(false);
-
   useEffect(() => {
     const s1 = player.addListener('statusChange', ({ status }) => {
       if (status === 'readyToPlay') {
         setIsReady(true);
         setDuration(player.duration ?? 0);
-
-        if (!resumeApplied.current && resumePosition > 0) {
-          resumeApplied.current = true;
-          // Clamp to (duration - 1s) so we don't land on the very last frame
-          // and immediately loop the user back to the start.
-          const dur = player.duration ?? 0;
-          const target = dur > 0 ? Math.min(resumePosition, Math.max(0, dur - 1)) : resumePosition;
-          try { player.currentTime = target; } catch (_) { /* harmless on early-status edge */ }
-        }
       }
     });
     const s2 = player.addListener('timeUpdate', ({ currentTime:t }) => setCurrentTime(t ?? 0));
     return () => { s1.remove(); s2.remove(); };
-  }, [player, resumePosition]);
+  }, [player]);
 
   // ── Playback control — pause when screen unfocused (no background play) ──
   const [userPaused, setUserPaused]   = useState(false);
@@ -282,7 +274,8 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
   const [isReposted,  setIsReposted]  = useState(item.isReposted ?? false);
   const [isMuted,     setIsMuted]     = useState(false);
   const [showInfo,    setShowInfo]    = useState(false);
-  const [isFollowing, setIsFollowing] = useState(item.isFollowing ?? false);
+  // Follow is three-state: 'none' | 'following' | 'requested' (private accounts).
+  const [followStatus, setFollowStatus] = useState(item.isFollowing ? 'following' : 'none');
   const [likes,       setLikes]       = useState(item.likes ?? 0);
   const [saves,       setSaves]       = useState(item.saves ?? 0);
   const [reposts,     setReposts]     = useState(item.reposts ?? 0);
@@ -320,17 +313,57 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
     lastTap.current = now;
   }, [isLiked]);
 
-  const handleLike = () => {
-    setIsLiked(l => { setLikes(c => l ? c - 1 : c + 1); return !l; });
+  const handleLike = async () => {
+    const wasLiked = isLiked;
+    // Optimistic flip first so the tap feels instant.
+    setIsLiked(!wasLiked);
+    setLikes(c => wasLiked ? Math.max(0, c - 1) : c + 1);
     bounce(likeAnim);
+    if (!item.videoId) return; // sample/legacy items — local only
+    const res = await videoService.toggleLike(item.videoId);
+    if (!res?.success) {
+      // Revert on failure and surface the reason when the server gives one
+      // (e.g. blocked by the creator).
+      setIsLiked(wasLiked);
+      setLikes(c => wasLiked ? c + 1 : Math.max(0, c - 1));
+      if (res?.message) Alert.alert('Could not update like', res.message);
+    }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const next = !isSaved;
+    // Optimistic flip first so the tap feels instant.
     setIsSaved(next);
-    setSaves(c => next ? c + 1 : c - 1);
+    setSaves(c => Math.max(0, next ? c + 1 : c - 1));
     bounce(saveAnim);
+    if (!item.videoId) { // sample/legacy items — local only
+      Alert.alert(next ? 'Saved' : 'Removed', next ? 'Added to your saved collection.' : 'Removed from saved.');
+      return;
+    }
+    const res = await videoService.toggleSave(item.videoId);
+    if (!res?.success) {
+      // Revert on failure and surface the server's reason when present.
+      setIsSaved(!next);
+      setSaves(c => Math.max(0, next ? c - 1 : c + 1));
+      Alert.alert('Could not update save', res?.message || 'Try again later.');
+      return;
+    }
     Alert.alert(next ? 'Saved' : 'Removed', next ? 'Added to your saved collection.' : 'Removed from saved.');
+  };
+
+  const handleFollow = async () => {
+    if (isSelf || followStatus !== 'none') return;
+    // Sample/legacy items carry no ownerId — keep the old local-only behaviour.
+    if (!item.ownerId) { setFollowStatus('following'); return; }
+    const prev = followStatus;
+    setFollowStatus('following'); // optimistic — server may downgrade to 'requested'
+    const res = await userService.followUser(String(item.ownerId));
+    if (res?.success) {
+      setFollowStatus(res.status === 'requested' ? 'requested' : 'following');
+    } else {
+      setFollowStatus(prev);
+      Alert.alert('Could not follow', res?.message || 'Try again later.');
+    }
   };
 
   const handleRepost = async () => {
@@ -349,7 +382,12 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
   };
 
   const handleShare = async () => {
-    try { await Share.share({ message:`Check out "${item.title}" by @${creator}`, url:item.uri }); } catch (_) {}
+    try {
+      await Share.share({ message:`Check out "${item.title}" by @${creator}`, url:item.uri });
+      // Record the share on the backend for real videos (fire-and-forget) —
+      // sample/legacy items carry no videoId.
+      if (item.videoId) videoService.shareVideo(item.videoId);
+    } catch (_) {}
   };
 
   const handleMute = () => {
@@ -518,23 +556,29 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
 
         {/* Creator row: avatar • @name • [Follow] */}
         <View style={S.creatorRow}>
-          {avatar ? (
-            <Image source={{ uri:avatar }} style={S.creatorAvatar} />
-          ) : (
-            <View style={[S.creatorAvatar, { backgroundColor:'#3b82f6', alignItems:'center', justifyContent:'center' }]}>
-              <Text style={{ color:'#fff', fontWeight:'800', fontSize:13 }}>{initial}</Text>
-            </View>
-          )}
-          <Text style={S.creatorName} numberOfLines={1}>@{creator}</Text>
-          {isVerified ? (
-            <Ionicons name="checkmark-circle" size={14} color="#3b82f6" style={{ marginLeft: 4 }} />
-          ) : null}
-          {isFollowing ? (
+          <TouchableOpacity
+            onPress={() => { if (item.ownerId) navigation.navigate('UserProfile', { userId: String(item.ownerId) }); }}
+            activeOpacity={0.8}
+            style={{ flexDirection:'row', alignItems:'center', flexShrink:1 }}
+          >
+            {avatar ? (
+              <Image source={{ uri:avatar }} style={S.creatorAvatar} />
+            ) : (
+              <View style={[S.creatorAvatar, { backgroundColor:'#3b82f6', alignItems:'center', justifyContent:'center' }]}>
+                <Text style={{ color:'#fff', fontWeight:'800', fontSize:13 }}>{initial}</Text>
+              </View>
+            )}
+            <Text style={S.creatorName} numberOfLines={1}>@{creator}</Text>
+            {isVerified ? (
+              <Ionicons name="checkmark-circle" size={14} color="#3b82f6" style={{ marginLeft: 4 }} />
+            ) : null}
+          </TouchableOpacity>
+          {isSelf ? null : followStatus !== 'none' ? (
             <View style={S.followingPill}>
-              <Text style={S.followingText}>Following</Text>
+              <Text style={S.followingText}>{followStatus === 'requested' ? 'Requested' : 'Following'}</Text>
             </View>
           ) : (
-            <TouchableOpacity onPress={() => setIsFollowing(true)} style={S.followPill}>
+            <TouchableOpacity onPress={handleFollow} style={S.followPill}>
               <Text style={S.followText}>Follow</Text>
             </TouchableOpacity>
           )}
@@ -581,6 +625,11 @@ export default function VideoPlayerScreen({ navigation, route }) {
   // than reloading the public feed (which would scramble ordering and snap to 0).
   const preloadedRaw   = Array.isArray(params?.videos) ? params.videos : null;
   const initialIndex   = Number.isInteger(params?.initialIndex) ? params.initialIndex : 0;
+  // Deep link by id only (chat video bubbles, notifications, share links):
+  // fetch the single video and render it as a one-item feed.
+  const soloVideoId    = (!initialVideo && !preloadedRaw && params?.videoId)
+    ? String(params.videoId)
+    : null;
 
   const insets     = useSafeAreaInsets();
   const isFocused  = useIsFocused();
@@ -614,10 +663,13 @@ export default function VideoPlayerScreen({ navigation, route }) {
   const [loading,     setLoading]     = useState(!preloadedFeed);
   const [loadingMore, setLoadingMore] = useState(false);
   const [page,        setPage]        = useState(1);
-  const [hasMore,     setHasMore]     = useState(!preloadedFeed); // can't paginate a frozen list
+  // Can't paginate a frozen list or a single deep-linked video.
+  const [hasMore,     setHasMore]     = useState(!preloadedFeed && !soloVideoId);
   const [activeIndex, setActiveIndex] = useState(safeInitialIndex);
   const [showComments, setShowComments] = useState(false);
   const [error,       setError]       = useState(null);
+  // Deep-linked video came back 403/404 (private / blocked / deleted).
+  const [unavailable, setUnavailable] = useState(false);
 
   // ── Fetch videos from backend ───────────────────────────────────────────
   const loadFeed = useCallback(async (pageNum, reset = false) => {
@@ -661,8 +713,24 @@ export default function VideoPlayerScreen({ navigation, route }) {
   }, [initialVideo]);
 
   // Initial load (one-shot). Skipped when the caller pre-supplied a list.
+  // A videoId-only deep link fetches that single video instead of the feed.
   useEffect(() => {
     if (preloadedFeed) return;
+    if (soloVideoId) {
+      (async () => {
+        const res = await videoService.getVideoById(soloVideoId);
+        if (!isMounted.current) return;
+        const mapped = (res?.success && res.video) ? mapApiVideo(res.video) : null;
+        if (mapped?.uri) {
+          setFeed([mapped]);
+        } else {
+          // 403/404 — private, blocked or deleted.
+          setUnavailable(true);
+        }
+        setLoading(false);
+      })();
+      return;
+    }
     loadFeed(1, true);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, []);
@@ -756,7 +824,7 @@ export default function VideoPlayerScreen({ navigation, route }) {
 
     const guestOptions = [
       { text: 'Report', style: 'destructive', onPress: () => Alert.alert('Reported', 'Thanks — we\'ll review this content.') },
-      { text: 'Share', onPress: async () => { try { await Share.share({ message: `Check out "${item.title || ''}"`, url: item.uri || '' }); } catch {} } },
+      { text: 'Share', onPress: async () => { try { await Share.share({ message: `Check out "${item.title || ''}"`, url: item.uri || '' }); if (item.videoId) videoService.shareVideo(item.videoId); } catch {} } },
       { text: 'Cancel', style: 'cancel' },
     ];
 
@@ -768,10 +836,6 @@ export default function VideoPlayerScreen({ navigation, route }) {
   }, [authUser?._id, navigation]);
 
   // Stable referential identity for renderItem so VideoItem doesn't re-mount each render.
-  // Resume position — only applied to the first video the user lands on,
-  // coming in from Watch History via route.params.resumePosition.
-  const resumePosition = Number(params?.resumePosition) || 0;
-
   const renderItem = useCallback(({ item, index }) => (
     <VideoItem
       item={item}
@@ -780,11 +844,8 @@ export default function VideoPlayerScreen({ navigation, route }) {
       onOpenComments={() => setShowComments(true)}
       tabOffset={tabOffset}
       onMore={handleMore}
-      // Pass resumePosition only for the entry-point item. Subsequent items
-      // start at 0 (default) so scroll-through playback feels normal.
-      resumePosition={index === initialIndex ? resumePosition : 0}
     />
-  ), [activeIndex, showComments, isFocused, handleMore, tabOffset, initialIndex, resumePosition]);
+  ), [activeIndex, showComments, isFocused, handleMore, tabOffset]);
 
   // Safe key extraction — prefer stable id, fall back to index for legacy items.
   const keyExtractor = useCallback(
@@ -801,6 +862,27 @@ export default function VideoPlayerScreen({ navigation, route }) {
         <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
         <ActivityIndicator size="large" color="white" />
         <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 14 }}>Loading videos…</Text>
+      </View>
+    );
+  }
+
+  // Deep-linked video the viewer can't see (private account, blocked, deleted).
+  if (unavailable) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+        <Ionicons name="eye-off-outline" size={48} color="rgba(255,255,255,0.6)" />
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 14 }}>This video isn't available</Text>
+        <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 6, textAlign: 'center' }}>
+          It may be private, deleted, or from an account you can't view.
+        </Text>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.85}
+          style={{ marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 22, backgroundColor: '#3b82f6' }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '800' }}>Go back</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -888,6 +970,7 @@ export default function VideoPlayerScreen({ navigation, route }) {
         videoId={feed[activeIndex]?._id || feed[activeIndex]?.id}
         commentCount={feed[activeIndex]?.commentsCount ?? feed[activeIndex]?.comments ?? 0}
         isExternal={!!feed[activeIndex]?.source && feed[activeIndex].source !== 'truevision'}
+        allowComments={feed[activeIndex]?.allowComments !== false}
         tabOffset={insets.bottom > 0 ? insets.bottom : Platform.select({ ios: 8, android: 8 })}
       />
     </View>

@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../services/AuthServices';
 import socketService from '../services/SocketService';
 import { registerForPushNotifications, unregisterPushNotifications } from '../services/pushRegistration';
+import { onSessionInvalidated } from '../services/sessionGuard';
 
 const AuthContext = createContext();
 
@@ -32,6 +33,26 @@ export const AuthProvider = ({ children }) => {
   // Load user data on app start
   useEffect(() => {
     loadUserData();
+  }, []);
+
+  // Global 401 handler. sessionGuard purges AsyncStorage and emits an event
+  // whenever any request comes back with an auth-invalidating status; here
+  // we mirror that in React state + tear down the socket so the navigator
+  // drops the user back to the login screen instead of staying in a zombie
+  // signed-in state that keeps hitting "Invalid or expired token".
+  useEffect(() => {
+    const off = onSessionInvalidated(({ code, reason }) => {
+      console.warn(`[auth] session invalidated (${code || 'unknown'}): ${reason || ''}`);
+      // Best-effort socket teardown — a stale JWT will make the socket
+      // reject the next handshake anyway.
+      try { socketService.disconnect(); } catch (_) { /* non-fatal */ }
+      // Push-token de-registration is not called here on purpose: the token
+      // is already invalid, so the /devices DELETE would 401 in a loop.
+      setToken(null);
+      setUser(null);
+      setIsAuthenticated(false);
+    });
+    return off;
   }, []);
 
   const loadUserData = async () => {
@@ -86,9 +107,38 @@ export const AuthProvider = ({ children }) => {
     await loadUserData();
   }, []);
 
+  // Shared success path — used by password login, Google, email-verify and
+  // the 2FA completion so all four set up the session identically.
+  const establishSession = (data) => {
+    const normalized = normalizeUser(data.user);
+    setToken(data.token);
+    setUser(normalized);
+    setIsAuthenticated(true);
+    Promise.all([
+      AsyncStorage.setItem('authToken', data.token),
+      AsyncStorage.setItem('userData', JSON.stringify(normalized)),
+    ]).catch((e) => console.error('AsyncStorage write error:', e));
+    socketService.connect();
+    registerForPushNotifications().catch(() => {});
+    return normalized;
+  };
+
   const login = async (emailOrUsername, password) => {
     try {
       const response = await authService.login(emailOrUsername, password);
+
+      // 2FA gate: password was right, but the account wants an emailed code.
+      // No token exists yet — the LoginScreen navigates to TwoFactorLogin
+      // with this pendingToken; completeTwoFactor() finishes the job.
+      if (response.success && response.requires2FA) {
+        return {
+          success: false,           // NOT signed in yet
+          requires2FA: true,
+          pendingToken: response.data?.pendingToken,
+          email: response.data?.email,
+          message: response.message,
+        };
+      }
 
       if (response.success) {
         const normalized = normalizeUser(response.data.user);
@@ -133,11 +183,41 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Complete a 2FA sign-in: exchange the pendingToken + emailed OTP for a
+  // real session. Called by TwoFactorLoginScreen.
+  const completeTwoFactor = async (pendingToken, otp) => {
+    try {
+      const securityService = require('../services/SecurityService').default;
+      const response = await securityService.verifyLoginOtp(pendingToken, otp);
+      if (!response.success) {
+        return { success: false, message: response.message, code: response.code };
+      }
+      const normalized = establishSession(response.data);
+      return { success: true, message: response.message, user: normalized };
+    } catch (error) {
+      console.error('2FA verify error:', error);
+      return { success: false, message: error.message || 'Verification failed' };
+    }
+  };
+
   // Sign in / sign up with a Google id_token. Returns the same envelope as
   // `login()` so callers can branch on `result.success` uniformly.
   const googleSignIn = async (idToken) => {
     try {
       const response = await authService.googleSignIn(idToken);
+
+      // Google is gated by 2FA exactly like the password path — the account
+      // owner still has to prove the second factor.
+      if (response.success && response.requires2FA) {
+        return {
+          success: false,
+          requires2FA: true,
+          pendingToken: response.data?.pendingToken,
+          email: response.data?.email,
+          message: response.message,
+        };
+      }
+
       if (!response.success) {
         return { success: false, message: response.message || 'Google sign-in failed' };
       }
@@ -206,15 +286,22 @@ export const AuthProvider = ({ children }) => {
       // otherwise a shared device would keep receiving notifications for the
       // signed-out account until the token naturally expired.
       await unregisterPushNotifications().catch(() => {});
+
+      // Tell the server we're signing out, while the Bearer header is still
+      // attached. This is the ONLY thing that (a) adds the token to the Redis
+      // revocation list and (b) closes the LoginSession row so the device
+      // stops showing as "active" in Security → Login Activity. Best-effort:
+      // an offline sign-out must still clear local state.
+      await authService.logout().catch(() => {});
+
       socketService.disconnect();
       await clearAuthData();
       return { success: true };
     } catch (error) {
       console.error('Logout error:', error);
-      return { 
-        success: false, 
-        message: 'Logout failed. Please try again.' 
-      };
+      // Never strand the user in a signed-in shell — clear locally regardless.
+      await clearAuthData().catch(() => {});
+      return { success: true };
     }
   };
 
@@ -239,6 +326,7 @@ export const AuthProvider = ({ children }) => {
     loading,
     isAuthenticated,
     login,
+    completeTwoFactor,
     googleSignIn,
     register,
     verifyEmail,

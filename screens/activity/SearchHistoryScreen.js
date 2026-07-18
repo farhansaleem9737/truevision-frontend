@@ -1,9 +1,10 @@
 // truevision/screens/activity/SearchHistoryScreen.js
 //
 // Recent search queries, newest first. Backed by /api/activity/search-history.
-// Recording happens on demand via activityService.recordSearch(query) — call
-// it from your search bar on submit / blur. Queries are stored lowercase and
-// deduped server-side.
+// Recording is wired from DiscoverScreen (activityService.recordSearch fires
+// on search submit). Queries are stored lowercase and deduped server-side.
+// Tapping a row jumps to the Discover tab and re-runs that query — Discover
+// picks up the `initialQuery` param on its DiscoverMain route.
 
 import { useCallback, useState } from 'react';
 import {
@@ -69,8 +70,25 @@ export default function SearchHistoryScreen({ navigation }) {
     activityService.deleteSearch(id);
   };
 
+  // Jump to the Discover tab and re-run this query there. DiscoverMain reads
+  // `initialQuery` from its route params; `searchTs` forces the effect to
+  // re-fire even when the same query is tapped twice in a row.
+  const runSearch = (queryText) => {
+    navigation.navigate('MainApp', {
+      screen: 'Discover',
+      params: {
+        screen: 'DiscoverMain',
+        params: { initialQuery: queryText, searchTs: Date.now() },
+      },
+    });
+  };
+
   const renderItem = ({ item }) => (
-    <View style={[S.row, { borderBottomColor: colors.divider }]}>
+    <TouchableOpacity
+      onPress={() => runSearch(item.query)}
+      activeOpacity={0.7}
+      style={[S.row, { borderBottomColor: colors.divider }]}
+    >
       <View style={[S.iconWrap, { backgroundColor: colors.iconChipBg }]}>
         <Ionicons name="search" size={16} color={colors.textMuted} />
       </View>
@@ -78,10 +96,11 @@ export default function SearchHistoryScreen({ navigation }) {
         <Text style={[S.query, { color: colors.text }]} numberOfLines={1}>{item.query}</Text>
         <Text style={[S.time, { color: colors.textDim }]}>{timeAgo(item.searchedAt)}</Text>
       </View>
+      <Ionicons name="arrow-up-outline" size={15} color={colors.textDim} style={S.insertIcon} />
       <TouchableOpacity onPress={() => removeOne(item._id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
         <Ionicons name="close" size={20} color={colors.textDim} />
       </TouchableOpacity>
-    </View>
+    </TouchableOpacity>
   );
 
   return (
@@ -109,11 +128,21 @@ export default function SearchHistoryScreen({ navigation }) {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
           ListEmptyComponent={
             <View style={S.empty}>
-              <Ionicons name="search-outline" size={42} color={colors.textDim} />
+              <View style={[S.emptyIconWrap, { backgroundColor: colors.iconChipBg }]}>
+                <Ionicons name="search-outline" size={30} color={colors.textDim} />
+              </View>
               <Text style={[S.emptyTitle, { color: colors.textMuted }]}>No search history</Text>
               <Text style={[S.emptySub, { color: colors.textDim }]}>
-                Queries you search for will appear here.
+                Searches you run from Discover will appear here so you can jump back to them.
               </Text>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('MainApp', { screen: 'Discover' })}
+                activeOpacity={0.8}
+                style={[S.emptyBtn, { backgroundColor: colors.accent }]}
+              >
+                <Ionicons name="compass-outline" size={16} color="#fff" />
+                <Text style={S.emptyBtnText}>Explore Discover</Text>
+              </TouchableOpacity>
             </View>
           }
         />
@@ -137,7 +166,19 @@ const S = StyleSheet.create({
   body: { flex: 1 },
   query: { fontSize: 15, fontWeight: '600' },
   time:  { fontSize: 11.5, marginTop: 2 },
+  // ↖-style "insert this query" affordance, standard in search-history lists.
+  insertIcon: { marginRight: 14, transform: [{ rotate: '-45deg' }] },
   empty: { alignItems: 'center', paddingVertical: 80, paddingHorizontal: 30 },
-  emptyTitle: { fontSize: 16, fontWeight: '700', marginTop: 14 },
-  emptySub:   { fontSize: 13, marginTop: 6, textAlign: 'center' },
+  emptyIconWrap: {
+    width: 72, height: 72, borderRadius: 36,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  emptyTitle: { fontSize: 16, fontWeight: '700', marginTop: 16 },
+  emptySub:   { fontSize: 13, marginTop: 6, textAlign: 'center', lineHeight: 19 },
+  emptyBtn: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 18, paddingVertical: 10,
+    borderRadius: 22, marginTop: 20, gap: 7,
+  },
+  emptyBtnText: { color: '#fff', fontSize: 13.5, fontWeight: '700' },
 });

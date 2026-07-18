@@ -1,7 +1,7 @@
 // truevision/components/activity/VideoTileGrid.js
 //
-// 3-column video-thumbnail grid used by Watch History, Liked Videos, and
-// Shared Videos screens. Same visual language as SavedVideosScreen.
+// 3-column video-thumbnail grid used by the Liked Videos and Shared Videos
+// screens. Same visual language as SavedVideosScreen.
 //
 // Props:
 //   items         — Video[] (or anything with thumbnailUrl/_id/viewsCount)
@@ -16,7 +16,7 @@
 //   badgeIcon     — Ionicons name shown on each tile (default 'eye')
 //   badgeValueOf  — (video) => string|number, drives the per-tile badge label
 //   renderOverlay — optional (item) => ReactNode, drawn over each tile
-//                    (e.g. delete button for Watch History rows)
+//                    (e.g. delete button for Shared Videos rows)
 
 import { ActivityIndicator, Dimensions, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
@@ -54,7 +54,7 @@ export default function VideoTileGrid({
   return (
     <FlatList
       data={items}
-      keyExtractor={(it, i) => String(it._id || it.id || i)}
+      keyExtractor={(it, i) => String(it._shareId || it._id || it.id || i)}
       numColumns={COLS}
       columnWrapperStyle={{ gap: GAP }}
       contentContainerStyle={{ gap: GAP, paddingBottom: 60 }}

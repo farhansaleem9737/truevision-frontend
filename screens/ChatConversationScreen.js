@@ -937,26 +937,71 @@ export default function ChatConversationScreen({ route, navigation }) {
     socketService.emit('stopTyping', { chatId });
     const clientMsgId = chatService.clientMsgId();
     const replyPayload = replyTo ? { replyTo } : {};
+
+    // Privacy / delivery rejection — restore the composed text so nothing is
+    // lost and surface the server's reason (e.g. the recipient's message
+    // privacy settings). `chatService.sendMessage` maps REST errors into
+    // { success:false, message: err.response?.data?.message }, so both the
+    // socket ack and the REST result flow through here identically.
+    const failSend = (res) => {
+      setText(trimmed);
+      Alert.alert('Message not sent', res?.message || "This user isn't accepting messages.");
+    };
+
     const sock = socketService.getSocket();
     if (sock?.connected) {
       socketService.emit('sendMessage',
         { chatId, text: trimmed, type: 'text', clientMsgId, ...replyPayload },
-        (res) => {
-          if (!res?.success) chatService.sendMessage(chatId, { text: trimmed, clientMsgId, ...replyPayload });
+        async (res) => {
+          if (!res?.success) {
+            if (res?.code === 'MESSAGES_NOT_ALLOWED' || res?.status === 403) {
+              // Server rejected on privacy grounds — retrying over REST
+              // would just 403 again, so don't.
+              failSend(res);
+            } else {
+              const rest = await chatService.sendMessage(chatId, { text: trimmed, clientMsgId, ...replyPayload });
+              if (!rest?.success) failSend(rest);
+            }
+          }
           setSending(false);
         });
     } else {
-      await chatService.sendMessage(chatId, { text: trimmed, clientMsgId, ...replyPayload });
-      loadMessages(1); setSending(false);
+      const res = await chatService.sendMessage(chatId, { text: trimmed, clientMsgId, ...replyPayload });
+      if (res?.success) loadMessages(1);
+      else failSend(res);
+      setSending(false);
     }
     setReplyTo(null);
   };
 
-  const sendVideoMessage = (videoId) => {
+  // Shared failure surface for media sends (image / video / document / voice) —
+  // same copy as the text path's failSend, minus the text restore (nothing typed).
+  const mediaSendFailed = (res) =>
+    Alert.alert('Message not sent', res?.message || "This user isn't accepting messages.");
+
+  // Socket ack for media sends — mirrors the text path: privacy rejections
+  // (MESSAGES_NOT_ALLOWED / 403) never retry over REST since they'd just 403
+  // again; any other failure falls back to REST and alerts if that fails too.
+  const mediaSendAck = (payload) => async (res) => {
+    if (res?.success) return;
+    if (res?.code === 'MESSAGES_NOT_ALLOWED' || res?.status === 403) {
+      mediaSendFailed(res);
+      return;
+    }
+    const rest = await chatService.sendMessage(chatId, payload);
+    if (!rest?.success) mediaSendFailed(rest);
+  };
+
+  const sendVideoMessage = async (videoId) => {
     const clientMsgId = chatService.clientMsgId();
+    const payload = { chatId, type: 'video', videoId, text: '', clientMsgId };
     const s = socketService.getSocket();
-    if (s?.connected) socketService.emit('sendMessage', { chatId, type: 'video', videoId, text: '', clientMsgId });
-    else chatService.sendMessage(chatId, { type: 'video', videoId, clientMsgId });
+    if (s?.connected) {
+      socketService.emit('sendMessage', payload, mediaSendAck(payload));
+    } else {
+      const rest = await chatService.sendMessage(chatId, payload);
+      if (!rest?.success) mediaSendFailed(rest);
+    }
   };
 
   // ── Media upload helpers ───────────────────────────────────────────────
@@ -977,8 +1022,13 @@ export default function ChatConversationScreen({ route, navigation }) {
       text: '', clientMsgId, ...replyPayload,
     };
     const s = socketService.getSocket();
-    if (s?.connected) socketService.emit('sendMessage', payload);
-    else { await chatService.sendMessage(chatId, payload); loadMessages(1); }
+    if (s?.connected) {
+      socketService.emit('sendMessage', payload, mediaSendAck(payload));
+    } else {
+      const rest = await chatService.sendMessage(chatId, payload);
+      if (rest?.success) loadMessages(1);
+      else mediaSendFailed(rest);
+    }
     setReplyTo(null); setSending(false);
   };
 
@@ -1030,8 +1080,13 @@ export default function ChatConversationScreen({ route, navigation }) {
         text: '', clientMsgId,
       };
       const s = socketService.getSocket();
-      if (s?.connected) socketService.emit('sendMessage', payload);
-      else { await chatService.sendMessage(chatId, payload); loadMessages(1); }
+      if (s?.connected) {
+        socketService.emit('sendMessage', payload, mediaSendAck(payload));
+      } else {
+        const rest = await chatService.sendMessage(chatId, payload);
+        if (rest?.success) loadMessages(1);
+        else mediaSendFailed(rest);
+      }
       setSending(false);
     } catch (e) { setSending(false); Alert.alert('Error', e.message); }
   };
@@ -1072,8 +1127,13 @@ export default function ChatConversationScreen({ route, navigation }) {
         audioDuration: totalSecs, text: '', clientMsgId,
       };
       const s = socketService.getSocket();
-      if (s?.connected) socketService.emit('sendMessage', payload);
-      else { await chatService.sendMessage(chatId, payload); loadMessages(1); }
+      if (s?.connected) {
+        socketService.emit('sendMessage', payload, mediaSendAck(payload));
+      } else {
+        const rest = await chatService.sendMessage(chatId, payload);
+        if (rest?.success) loadMessages(1);
+        else mediaSendFailed(rest);
+      }
       setSending(false);
     } catch (e) { console.warn('voice send', e.message); setSending(false); }
   };
@@ -1330,7 +1390,7 @@ export default function ChatConversationScreen({ route, navigation }) {
             </TouchableOpacity>
 
             <TouchableOpacity style={S.hIdentity} activeOpacity={0.7}
-              onPress={() => Alert.alert('Contact', 'Contact profile view coming soon.')}>
+              onPress={() => { if (otherUser?._id) navigation.navigate('UserProfile', { userId: otherUser._id }); }}>
               <View>
                 <Avatar uri={otherUser?.profileImage} name={otherUser?.fullName || otherUser?.username} size={40} ct={ct} />
                 <View style={[S.hPresence, {

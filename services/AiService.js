@@ -13,20 +13,15 @@
 // screens can switch on the success flag without try/catch ceremony.
 
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from './config';
+import { attachSessionGuard } from './sessionGuard';
 
 const api = axios.create({
   baseURL: `${API_URL}/ai`,
   timeout: 30000,
 });
 
-// Attach JWT to every request — matches the other services in this folder.
-api.interceptors.request.use(async (config) => {
-  const token = await AsyncStorage.getItem('authToken');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+attachSessionGuard(api);
 
 // ─────────────────────────────────────────────────────────────────────────────
 

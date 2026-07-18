@@ -1,18 +1,13 @@
 // truevision/services/UserService.js
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from './config';
+import { attachSessionGuard } from './sessionGuard';
 
 const BASE_URL = `${API_URL}/users`;
 
 const api = axios.create({ baseURL: BASE_URL, timeout: 30000 });
 
-// Attach JWT to every request automatically
-api.interceptors.request.use(async (config) => {
-  const token = await AsyncStorage.getItem('authToken');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+attachSessionGuard(api);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Upload image directly to Cloudinary via native XMLHttpRequest.
@@ -148,6 +143,120 @@ const userService = {
       return res.data;
     } catch (e) {
       return { success: false, message: e.response?.data?.message || 'Network error' };
+    }
+  },
+
+  // ── Social graph (profiles / follows / requests / blocks) ──────────────────
+  // These pass the backend error body through untouched so callers can branch
+  // on `code` (e.g. FOLLOWERS_PRIVATE, ACCOUNT_PRIVATE) as well as `message`.
+
+  // ── Public profile of any user ──────────────────────────────────────────────
+  getUserProfile: async (userId) => {
+    try {
+      const res = await api.get(`/${userId}/profile`);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  // ── Follow / unfollow ────────────────────────────────────────────────────────
+  // followUser resolves to { status: 'following' } for public accounts or
+  // { status: 'requested' } when the target account is private.
+  followUser: async (userId) => {
+    try {
+      const res = await api.post(`/${userId}/follow`);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  unfollowUser: async (userId) => {
+    try {
+      const res = await api.delete(`/${userId}/follow`);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  // ── Follow requests (private accounts) ──────────────────────────────────────
+  getFollowRequests: async (page = 1, limit = 20) => {
+    try {
+      const res = await api.get('/follow-requests', { params: { page, limit } });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  acceptFollowRequest: async (userId) => {
+    try {
+      const res = await api.post(`/follow-requests/${userId}/accept`);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  declineFollowRequest: async (userId) => {
+    try {
+      const res = await api.post(`/follow-requests/${userId}/decline`);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  // ── Followers / following lists ─────────────────────────────────────────────
+  // May fail with 403 { code: 'FOLLOWERS_PRIVATE' | 'ACCOUNT_PRIVATE' } — the
+  // code is passed through so list screens can show the right empty state.
+  getFollowers: async (userId, page = 1, limit = 30) => {
+    try {
+      const res = await api.get(`/${userId}/followers`, { params: { page, limit } });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  getFollowing: async (userId, page = 1, limit = 30) => {
+    try {
+      const res = await api.get(`/${userId}/following`, { params: { page, limit } });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  // ── Block / unblock ──────────────────────────────────────────────────────────
+  blockUser: async (userId) => {
+    try {
+      const res = await api.post(`/${userId}/block`);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  unblockUser: async (userId) => {
+    try {
+      const res = await api.delete(`/${userId}/block`);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
+    }
+  },
+
+  getBlockedUsers: async ({ page = 1, limit = 30, q = '' } = {}) => {
+    try {
+      const params = { page, limit };
+      if (q) params.q = q;
+      const res = await api.get('/blocked', { params });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: 'Network error', ...(e.response?.data || {}) };
     }
   },
 };

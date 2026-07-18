@@ -5,19 +5,15 @@
 // returns the response body or `{ success: false, message }` on failure.
 
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from './config';
+import { attachSessionGuard } from './sessionGuard';
 
 const api = axios.create({
   baseURL: `${API_URL}/activity`,
   timeout: 15000,
 });
 
-api.interceptors.request.use(async (config) => {
-  const token = await AsyncStorage.getItem('authToken');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+attachSessionGuard(api);
 
 const wrap = async (label, fn) => {
   try { return await fn(); }
@@ -27,24 +23,6 @@ const wrap = async (label, fn) => {
 };
 
 const activityService = {
-  // ── Watch History ─────────────────────────────────────────────────────────
-  getWatchHistory: (page = 1, limit = 20) =>
-    wrap('watch-history', async () => (await api.get('/watch-history', { params: { page, limit } })).data),
-
-  /** Record (or update) a watch event. Backend dedupes on (userId, videoId). */
-  recordWatch: (videoId, { lastPosition, watchDuration } = {}) =>
-    wrap('record-watch', async () => (await api.post('/watch-history', { videoId, lastPosition, watchDuration })).data),
-
-  deleteWatch: (videoId) =>
-    wrap('delete-watch', async () => (await api.delete(`/watch-history/${videoId}`)).data),
-
-  /** Bulk delete from the multi-select toolbar. `ids` are WatchHistory row ids. */
-  bulkDeleteWatch: (ids) =>
-    wrap('bulk-delete-watch', async () => (await api.post('/watch-history/bulk-delete', { ids })).data),
-
-  clearWatch: () =>
-    wrap('clear-watch', async () => (await api.delete('/watch-history')).data),
-
   // ── Viewed Profiles ───────────────────────────────────────────────────────
   getViewedProfiles: (page = 1, limit = 20) =>
     wrap('viewed-profiles', async () => (await api.get('/viewed-profiles', { params: { page, limit } })).data),
@@ -86,6 +64,12 @@ const activityService = {
 
   clearSearches: () =>
     wrap('clear-searches', async () => (await api.delete('/search-history')).data),
+
+  // ── Comments History ──────────────────────────────────────────────────────
+  /** Comments the current user has posted, newest first. Each item carries a
+   *  lightweight `video` snapshot (or null if the video was deleted). */
+  getMyComments: (page = 1, limit = 20) =>
+    wrap('my-comments', async () => (await api.get('/comments', { params: { page, limit } })).data),
 
   // ── Clear everything ──────────────────────────────────────────────────────
   clearAll: () =>

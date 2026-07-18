@@ -37,6 +37,10 @@ export default function CaptionSection({
   caption,
   song,
   isFollowing,
+  // Optional richer state: 'none' | 'following' | 'requested'. When provided
+  // it wins over the binary isFollowing — 'requested' renders a muted,
+  // non-tappable "Requested" chip (private account, approval pending).
+  followStatus,
   onFollow,
   isVerified,
   style,
@@ -62,11 +66,15 @@ export default function CaptionSection({
         {isVerified && (
           <Ionicons name="checkmark-circle" size={14} color="#3b82f6" style={{ marginLeft: 4 }} />
         )}
-        {!isFollowing && (
+        {followStatus === 'requested' ? (
+          <View style={[S.followBtn, S.requestedBtn]}>
+            <Text style={[S.followText, S.requestedText]}>Requested</Text>
+          </View>
+        ) : (followStatus ? followStatus === 'none' : !isFollowing) ? (
           <TouchableOpacity onPress={onFollow} activeOpacity={0.8} style={S.followBtn}>
             <Text style={S.followText}>Follow</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
 
       {/* Caption */}
@@ -107,6 +115,14 @@ const S = StyleSheet.create({
   },
   followText: {
     color: '#fff', fontSize: 12, fontWeight: '700',
+  },
+  // "Requested" — pending approval on a private account. Muted + inert.
+  requestedBtn: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  requestedText: {
+    color: 'rgba(255,255,255,0.6)',
   },
 
   caption: {

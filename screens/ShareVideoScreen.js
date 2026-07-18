@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, Image,
-  StyleSheet, ActivityIndicator,
+  StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -60,9 +60,14 @@ export default function ShareVideoScreen({ route, navigation }) {
   useEffect(() => { load(); }, [load]);
 
   // ── Send the selected video as a chat message ─────────────────────────
-  const selectVideo = (video) => {
+  // Only navigate back once the server confirms the send — a privacy
+  // rejection (e.g. recipient's whoCanMessage setting) surfaces an Alert.
+  const selectVideo = async (video) => {
     const videoId = video._id || video.id;
     const socket = socketService.getSocket();
+
+    const failShare = (res) =>
+      Alert.alert('Could not share', res?.message || "This user isn't accepting messages.");
 
     if (socket?.connected) {
       socketService.emit('sendMessage', {
@@ -70,12 +75,15 @@ export default function ShareVideoScreen({ route, navigation }) {
         type: 'video',
         videoId,
         text: '',
+      }, (res) => {
+        if (res?.success) navigation.goBack();
+        else failShare(res);
       });
     } else {
-      chatService.sendMessage(chatId, { type: 'video', videoId });
+      const res = await chatService.sendMessage(chatId, { type: 'video', videoId });
+      if (res?.success) navigation.goBack();
+      else failShare(res);
     }
-
-    navigation.goBack();
   };
 
   // ── Render ─────────────────────────────────────────────────────────────

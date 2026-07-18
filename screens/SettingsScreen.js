@@ -6,6 +6,7 @@
 
 import { ScrollView, StatusBar, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 import ScreenHeader from '../components/settings/ScreenHeader';
 import { Section, SettingsRow, SwitchRow } from '../components/settings/SettingsRow';
 import { useTheme } from '../context/ThemeContext';
@@ -13,49 +14,50 @@ import { useTheme } from '../context/ThemeContext';
 export default function SettingsScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { isDark, colors, toggleTheme } = useTheme();
+  const { t } = useTranslation();
   const go = (route) => navigation.navigate(route);
 
   return (
     <View style={[S.root, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
       <StatusBar barStyle={colors.statusBarStyle} backgroundColor={colors.bg} />
-      <ScreenHeader title="Settings" onBack={() => navigation.goBack()} />
+      <ScreenHeader title={t('settings.title')} onBack={() => navigation.goBack()} />
 
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }} showsVerticalScrollIndicator={false}>
-        <Section title="Account">
-          <SettingsRow icon="pulse-outline"             label="My Activity"   onPress={() => go('Activity')} />
-          <SettingsRow icon="create-outline"            label="Edit Profile"  onPress={() => go('EditProfile')} />
-          <SettingsRow icon="lock-closed-outline"       label="Privacy"       onPress={() => go('Privacy')} />
-          <SettingsRow icon="shield-checkmark-outline"  label="Security"      onPress={() => go('Security')} last />
+        <Section title={t('settings.account')}>
+          <SettingsRow icon="pulse-outline"             label={t('settings.myActivity')}  onPress={() => go('Activity')} />
+          <SettingsRow icon="create-outline"            label={t('settings.editProfile')} onPress={() => go('EditProfile')} />
+          <SettingsRow icon="lock-closed-outline"       label={t('settings.privacy')}     onPress={() => go('Privacy')} />
+          <SettingsRow icon="shield-checkmark-outline"  label={t('settings.security')}    onPress={() => go('Security')} last />
         </Section>
 
-        <Section title="Display">
+        <Section title={t('settings.display')}>
           <SwitchRow
             icon={isDark ? 'moon' : 'moon-outline'}
-            label="Dark Mode"
-            sub={isDark ? 'Dark theme is on' : 'Switch to a darker look'}
+            label={t('settings.darkMode')}
+            sub={isDark ? t('settings.darkOn') : t('settings.darkOff')}
             value={isDark}
             onValueChange={toggleTheme}
             last
           />
         </Section>
 
-        <Section title="Content">
-          <SettingsRow icon="bookmark-outline"          label="Saved Videos"      onPress={() => go('SavedVideos')} />
-          <SettingsRow icon="cloud-download-outline"    label="Download History"  onPress={() => go('DownloadHistory')} last />
+        <Section title={t('settings.content')}>
+          <SettingsRow icon="bookmark-outline"          label={t('settings.savedVideos')}     onPress={() => go('SavedVideos')} />
+          <SettingsRow icon="cloud-download-outline"    label={t('settings.downloadHistory')} onPress={() => go('DownloadHistory')} last />
         </Section>
 
-        <Section title="Notifications">
-          <SettingsRow icon="notifications-outline"     label="Notifications"     sub="Push and email" onPress={() => go('NotificationSettings')} last />
+        <Section title={t('settings.notifications')}>
+          <SettingsRow icon="notifications-outline"     label={t('settings.notifications')} sub={t('settings.notificationsSub')} onPress={() => go('NotificationSettings')} last />
         </Section>
 
-        <Section title="General">
-          <SettingsRow icon="globe-outline"             label="Language"              onPress={() => go('Language')} />
-          <SettingsRow icon="options-outline"           label="Content Preferences"   onPress={() => go('ContentPreferences')} last />
+        <Section title={t('settings.general')}>
+          <SettingsRow icon="globe-outline"             label={t('settings.language')}           onPress={() => go('Language')} />
+          <SettingsRow icon="options-outline"           label={t('settings.contentPreferences')} onPress={() => go('ContentPreferences')} last />
         </Section>
 
-        <Section title="Support">
-          <SettingsRow icon="help-circle-outline"        label="Help & Support"     onPress={() => go('HelpSupport')} />
-          <SettingsRow icon="information-circle-outline" label="About TrueVision"   onPress={() => go('About')} last />
+        <Section title={t('settings.support')}>
+          <SettingsRow icon="help-circle-outline"        label={t('settings.help')}  onPress={() => go('HelpSupport')} />
+          <SettingsRow icon="information-circle-outline" label={t('settings.about')} onPress={() => go('About')} last />
         </Section>
       </ScrollView>
     </View>

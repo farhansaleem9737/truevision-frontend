@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { compressVideo, deleteTempFile } from '../utils/VideoCompressor';
 import { uploadInChunks, getFileSize }   from '../utils/ChunkUploader';
 import { API_URL } from './config';
+import { attachSessionGuard } from './sessionGuard';
 
 const BASE_URL = `${API_URL}/videos`;
 
@@ -11,13 +12,10 @@ const BASE_URL = `${API_URL}/videos`;
 // Regular API calls: 30 s timeout
 const api = axios.create({ baseURL: BASE_URL, timeout: 30000 });
 
-// Attach JWT token to every request
-const attachToken = async (config) => {
-  const token = await AsyncStorage.getItem('authToken');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-};
-api.interceptors.request.use(attachToken);
+// Attaches the request interceptor (Bearer token from AsyncStorage) AND the
+// response interceptor that purges stale tokens on 401 and broadcasts
+// `session:invalidated` — see services/sessionGuard.js for the design.
+attachSessionGuard(api);
 
 // ─────────────────────────────────────────────────────────────────────────────
 const videoService = {
@@ -389,6 +387,50 @@ const videoService = {
     }
   },
 
+  // ── HIDE / SHOW LIKE COUNT (owner-only) ─────────────────────────────────
+  // hidden: optional boolean. Omit to flip current state.
+  toggleLikeCountVisibility: async (id, hidden) => {
+    try {
+      const body = (typeof hidden === 'boolean') ? { hidden } : {};
+      const res  = await api.put(`/${id}/hide-like-count`, body);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error' };
+    }
+  },
+
+  // ── HIDE / SHOW SHARE COUNT (owner-only) ────────────────────────────────
+  toggleShareCountVisibility: async (id, hidden) => {
+    try {
+      const body = (typeof hidden === 'boolean') ? { hidden } : {};
+      const res  = await api.put(`/${id}/hide-share-count`, body);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error' };
+    }
+  },
+
+  // ── ARCHIVE / RESTORE (owner-only) ──────────────────────────────────────
+  toggleArchive: async (id, archived) => {
+    try {
+      const body = (typeof archived === 'boolean') ? { archived } : {};
+      const res  = await api.put(`/${id}/archive`, body);
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error' };
+    }
+  },
+
+  // ── GET ARCHIVED VIDEOS (owner-only list) ───────────────────────────────
+  getArchivedVideos: async (page = 1, limit = 12) => {
+    try {
+      const res = await api.get('/archived', { params: { page, limit } });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error', videos: [] };
+    }
+  },
+
   // ── SOCIAL ACTIONS ───────────────────────────────────────────────────────────
   toggleLike:         async (id) => { try { return (await api.post(`/${id}/like`)).data;          } catch(e) { return { success: false }; } },
   toggleSave:         async (id) => { try { return (await api.post(`/${id}/save`)).data;          } catch(e) { return { success: false }; } },
@@ -396,7 +438,16 @@ const videoService = {
   toggleFavorite:     async (id) => { try { return (await api.post(`/${id}/favorite`)).data;      } catch(e) { return { success: false }; } },
   markNotInterested:  async (id) => { try { return (await api.post(`/${id}/not-interested`)).data;} catch(e) { return { success: false }; } },
   recordView:  async (id, watchTime = 0) => { try { return (await api.post(`/${id}/view`, { watchTime })).data; } catch(e) { return { success: false }; } },
-  shareVideo:  async (id)  => { try { return (await api.post(`/${id}/share`)).data;               } catch(e) { return { success: false }; } },
+  // Optional extra body lets callers tag the share destination
+  // (e.g. { platform: 'chat', toUserId }) — omitting it keeps legacy behaviour.
+  shareVideo:  async (id, { platform, toUserId } = {}) => {
+    try {
+      const body = {};
+      if (platform) body.platform = platform;
+      if (toUserId) body.toUserId = toUserId;
+      return (await api.post(`/${id}/share`, body)).data;
+    } catch(e) { return { success: false }; }
+  },
   downloadVideo: async (id)=> { try { return (await api.post(`/${id}/download`)).data;            } catch(e) { return { success: false }; } },
   reportVideo: async (id, reason, description = '') => {
     try { return (await api.post(`/${id}/report`, { reason, description })).data; }

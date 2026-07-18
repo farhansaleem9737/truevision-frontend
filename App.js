@@ -1,9 +1,16 @@
 import React from 'react';
+import { I18nManager } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider }          from './context/ThemeContext';
+import { LanguageProvider }       from './context/LanguageContext';
+
+// Initialise i18next before any screen mounts (English is bundled; other
+// languages lazy-load). Also allow RTL so LanguageProvider can flip direction.
+import './i18n';
+I18nManager.allowRTL(true);
 
 // Import Auth screens
 import SplashScreen from './screens/SplashScreen';
@@ -17,25 +24,49 @@ import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import BottomTabNavigator       from './navigation/BottomTabNavigator';
 import VideoPlayerScreen        from './screens/VideoPlayerScreen';
 import EditProfileScreen        from './screens/EditProfileScreen';
+import EditReelScreen           from './screens/EditReelScreen';
+import ArchivedReelsScreen      from './screens/ArchivedReelsScreen';
 import ChatConversationScreen   from './screens/ChatConversationScreen';
 import ForwardMessageScreen     from './screens/ForwardMessageScreen';
 import ShareVideoScreen         from './screens/ShareVideoScreen';
 import SettingsScreen           from './screens/SettingsScreen';
 import HelpSupportScreen        from './screens/HelpSupportScreen';
 import ActivityScreen           from './screens/ActivityScreen';
-import WatchHistoryScreen       from './screens/activity/WatchHistoryScreen';
 import ViewedProfilesScreen     from './screens/activity/ViewedProfilesScreen';
 import LikedVideosScreen        from './screens/activity/LikedVideosScreen';
 import SharedVideosScreen       from './screens/activity/SharedVideosScreen';
 import SearchHistoryScreen      from './screens/activity/SearchHistoryScreen';
+import CommentsHistoryScreen    from './screens/CommentsHistoryScreen';
+import UserProfileScreen        from './screens/UserProfileScreen';
+import FollowListScreen         from './screens/FollowListScreen';
+import FollowRequestsScreen     from './screens/FollowRequestsScreen';
+import BlockedUsersScreen       from './screens/BlockedUsersScreen';
+import AudienceSettingScreen    from './screens/AudienceSettingScreen';
 import PrivacyScreen            from './screens/PrivacyScreen';
 import SecurityScreen           from './screens/SecurityScreen';
+import ChangePasswordScreen     from './screens/ChangePasswordScreen';
+import LoginActivityScreen      from './screens/LoginActivityScreen';
+import PhoneVerificationScreen  from './screens/PhoneVerificationScreen';
+import TwoFactorLoginScreen     from './screens/TwoFactorLoginScreen';
 import SavedVideosScreen        from './screens/SavedVideosScreen';
 import DownloadHistoryScreen    from './screens/DownloadHistoryScreen';
 import NotificationSettingsScreen from './screens/NotificationSettingsScreen';
 import LanguageScreen           from './screens/LanguageScreen';
 import ContentPreferencesScreen from './screens/ContentPreferencesScreen';
+import InterestedTopicsScreen   from './screens/InterestedTopicsScreen';
 import AboutScreen              from './screens/AboutScreen';
+import TermsScreen              from './screens/legal/TermsScreen';
+import PrivacyPolicyScreen      from './screens/legal/PrivacyPolicyScreen';
+import CheckForUpdatesScreen    from './screens/CheckForUpdatesScreen';
+import TeamCreditsScreen        from './screens/TeamCreditsScreen';
+import LicensesScreen           from './screens/LicensesScreen';
+import HelpCenterScreen         from './screens/support/HelpCenterScreen';
+import ContactUsScreen          from './screens/support/ContactUsScreen';
+import ReportProblemScreen      from './screens/support/ReportProblemScreen';
+import MyTicketsScreen          from './screens/support/MyTicketsScreen';
+
+// Start capturing console logs at boot so bug reports can attach them.
+import './utils/logBuffer';
 
 import './global.css';
 
@@ -57,6 +88,8 @@ function AuthStack() {
       <Stack.Screen name="VerifyEmail" component={VerifyEmailScreen} />
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
       <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+      {/* 2FA code entry — after a correct password on a 2FA-enabled account */}
+      <Stack.Screen name="TwoFactorLogin" component={TwoFactorLoginScreen} />
     </Stack.Navigator>
   );
 }
@@ -95,6 +128,20 @@ function AppStack() {
         options={{
           animation: 'slide_from_right',
         }}
+      />
+
+      {/* Edit Reel — metadata-only editor reached from the "Manage your reel" sheet */}
+      <Stack.Screen
+        name="EditReel"
+        component={EditReelScreen}
+        options={{ animation: 'slide_from_right' }}
+      />
+
+      {/* Archived Reels — owner-only list of archived videos */}
+      <Stack.Screen
+        name="ArchivedReels"
+        component={ArchivedReelsScreen}
+        options={{ animation: 'slide_from_right' }}
       />
 
       {/* Chat Conversation */}
@@ -141,22 +188,43 @@ function AppStack() {
         options={{ animation: 'slide_from_right' }}
       />
 
+      {/* Social graph screens */}
+      <Stack.Screen name="UserProfile"          component={UserProfileScreen}          options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="FollowList"           component={FollowListScreen}           options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="FollowRequests"       component={FollowRequestsScreen}       options={{ animation: 'slide_from_right' }} />
       {/* Settings sub-screens */}
       <Stack.Screen name="Activity"             component={ActivityScreen}             options={{ animation: 'slide_from_right' }} />
       {/* Activity sub-screens */}
-      <Stack.Screen name="WatchHistory"         component={WatchHistoryScreen}         options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="ViewedProfiles"       component={ViewedProfilesScreen}       options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="LikedVideos"          component={LikedVideosScreen}          options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="SharedVideos"         component={SharedVideosScreen}         options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="SearchHistory"        component={SearchHistoryScreen}        options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="CommentsHistory"      component={CommentsHistoryScreen}      options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="Privacy"              component={PrivacyScreen}              options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="BlockedUsers"         component={BlockedUsersScreen}         options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="AudienceSetting"      component={AudienceSettingScreen}      options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="Security"             component={SecurityScreen}             options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="ChangePassword"       component={ChangePasswordScreen}       options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="LoginActivity"        component={LoginActivityScreen}        options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="PhoneVerification"    component={PhoneVerificationScreen}    options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="SavedVideos"          component={SavedVideosScreen}          options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="DownloadHistory"      component={DownloadHistoryScreen}      options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="Language"             component={LanguageScreen}             options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="ContentPreferences"   component={ContentPreferencesScreen}   options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="InterestedTopics"      component={InterestedTopicsScreen}     options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="About"                component={AboutScreen}                options={{ animation: 'slide_from_right' }} />
+      {/* About TrueVision module — legal, updates, credits, licenses */}
+      <Stack.Screen name="Terms"                component={TermsScreen}                options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="PrivacyPolicy"        component={PrivacyPolicyScreen}        options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="CheckForUpdates"      component={CheckForUpdatesScreen}      options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="TeamCredits"          component={TeamCreditsScreen}          options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="Licenses"             component={LicensesScreen}             options={{ animation: 'slide_from_right' }} />
+      {/* Help & Support module */}
+      <Stack.Screen name="HelpCenter"           component={HelpCenterScreen}           options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="ContactUs"            component={ContactUsScreen}            options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="ReportProblem"        component={ReportProblemScreen}        options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="MyTickets"            component={MyTicketsScreen}            options={{ animation: 'slide_from_right' }} />
     </Stack.Navigator>
   );
 }
@@ -178,9 +246,14 @@ export default function App() {
     <SafeAreaProvider>
       <ThemeProvider>
         <AuthProvider>
-          <NavigationContainer>
-            <RootNavigator />
-          </NavigationContainer>
+          {/* LanguageProvider sits inside AuthProvider so it can restore the
+              account's language on login, and outside the navigator so a
+              language change re-renders every screen. */}
+          <LanguageProvider>
+            <NavigationContainer>
+              <RootNavigator />
+            </NavigationContainer>
+          </LanguageProvider>
         </AuthProvider>
       </ThemeProvider>
     </SafeAreaProvider>

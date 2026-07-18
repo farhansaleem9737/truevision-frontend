@@ -1,17 +1,29 @@
 //truevision/services/AuthServices.js
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { API_URL as BASE_API } from './config';
+import { attachSessionGuard } from './sessionGuard';
+
+// expo-device is optional at require-time (matches pushRegistration.js
+// pattern) — Platform gives a usable fallback if it's ever removed.
+let Device = null;
+try { Device = require('expo-device'); } catch (_) { /* optional */ }
 
 const API_URL = `${BASE_API}/auth`;
 
-// Axios instance — attaches JWT automatically
-const api = axios.create({ baseURL: API_URL, timeout: 10000 });
-api.interceptors.request.use(async (config) => {
-  const token = await AsyncStorage.getItem('authToken');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+// Device identity headers — read by Backend/services/sessionTracker at
+// login to build the Security screen's "Login Activity" rows.
+const deviceHeaders = {
+  'x-device-name': Device?.modelName || Device?.deviceName || `${Platform.OS} device`,
+  'x-device-os':   `${Platform.OS === 'ios' ? 'iOS' : Platform.OS === 'android' ? 'Android' : Platform.OS} ${Device?.osVersion || Platform.Version || ''}`.trim(),
+  'x-app-version': Constants?.expoConfig?.version || '1.0.0',
+};
+
+// Axios instance — attaches JWT automatically and reacts to 401 by purging
+// stale credentials + broadcasting session:invalidated.
+const api = axios.create({ baseURL: API_URL, timeout: 10000, headers: deviceHeaders });
+attachSessionGuard(api);
 
 const authService = {
   register: async (userData) => {
@@ -39,6 +51,19 @@ const authService = {
   googleSignIn: async (idToken) => {
     try {
       const response = await api.post('/google', { idToken });
+      return response.data;
+    } catch (error) {
+      return error.response?.data || { success: false, message: 'Network error' };
+    }
+  },
+
+  // Server-side sign-out: adds this token to the Redis revocation list and
+  // closes the LoginSession row (so the device stops showing as active in
+  // Security → Login Activity). Must be called while the Bearer header is
+  // still attached — i.e. BEFORE clearing AsyncStorage.
+  logout: async () => {
+    try {
+      const response = await api.post('/logout');
       return response.data;
     } catch (error) {
       return error.response?.data || { success: false, message: 'Network error' };

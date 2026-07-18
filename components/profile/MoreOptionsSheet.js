@@ -26,7 +26,7 @@ import { useTheme } from '../../context/ThemeContext';
 
 const { height: SCREEN_H } = Dimensions.get('window');
 
-export default function MoreOptionsSheet({ visible, onClose, onSettings, onHelp, onLogout }) {
+export default function MoreOptionsSheet({ visible, onClose, onSettings, onHelp, onArchived, onLogout }) {
   const insets = useSafeAreaInsets();
   const { isDark } = useTheme();
 
@@ -143,6 +143,17 @@ export default function MoreOptionsSheet({ visible, onClose, onSettings, onHelp,
               onPress={() => { onClose?.(); onSettings?.(); }}
               palette={palette}
             />
+            {onArchived ? (
+              <>
+                <View style={[S.divider, { backgroundColor: palette.divider }]} />
+                <ActionRow
+                  icon="archive-outline"
+                  label="Archived reels"
+                  onPress={() => { onClose?.(); onArchived?.(); }}
+                  palette={palette}
+                />
+              </>
+            ) : null}
             <View style={[S.divider, { backgroundColor: palette.divider }]} />
             <ActionRow
               icon="help-circle-outline"

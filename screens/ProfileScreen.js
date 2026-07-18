@@ -15,20 +15,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, RefreshControl,
-  StatusBar, StyleSheet, Dimensions, ActivityIndicator, Alert,
+  StatusBar, StyleSheet, Dimensions, ActivityIndicator, Alert, Share,
 } from 'react-native';
 import { useSafeAreaInsets }  from 'react-native-safe-area-context';
 import { useFocusEffect }     from '@react-navigation/native';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient }     from 'expo-linear-gradient';
 import { Ionicons }           from '@expo/vector-icons';
+import * as FileSystem        from 'expo-file-system';
 import { useAuth }            from '../context/AuthContext';
 import { useTheme }           from '../context/ThemeContext';
 import userService            from '../services/UserService';
 import videoService           from '../services/VideoService';
 import { API_URL }            from '../services/config';
 import MoreOptionsSheet       from '../components/profile/MoreOptionsSheet';
-import VideoActionsSheet      from '../components/profile/VideoActionsSheet';
+import ManageReelSheet        from '../components/reel/ManageReelSheet';
 
 const { width } = Dimensions.get('window');
 const GRID_GAP  = 2;
@@ -69,11 +70,18 @@ const AvatarRing = ({ uri, name, size = 100 }) => (
   </LinearGradient>
 );
 
-const Stat = ({ value, label, colors }) => (
-  <View style={S.stat}>
+// Tappable when an onPress is provided (Followers / Following → FollowList);
+// plain cells (Videos) render identically but ignore taps.
+const Stat = ({ value, label, colors, onPress }) => (
+  <TouchableOpacity
+    style={S.stat}
+    onPress={onPress}
+    disabled={!onPress}
+    activeOpacity={0.6}
+  >
     <Text style={[S.statValue, colors && { color: colors.text }]}>{fmtCount(value)}</Text>
     <Text style={[S.statLabel, colors && { color: colors.textMuted }]}>{label}</Text>
-  </View>
+  </TouchableOpacity>
 );
 
 // ─── Video tile (memoised) ───────────────────────────────────────────────────
@@ -259,26 +267,92 @@ export default function ProfileScreen({ navigation }) {
     }
   };
 
-  // ── Long-press tile → open modern Pin / Delete sheet ────────────────────
+  // ── Long-press tile → open the "Manage your reel" sheet ─────────────────
   const handleTileLongPress = (video) => setActionsVideo(video);
 
-  const handlePinAction = async () => {
-    const video = actionsVideo;
-    if (!video) return;
-    const isPinned = !!video.pinned;
-    setVideos((prev) => prev.map((v) => v._id === video._id ? { ...v, pinned: !isPinned } : v));
-    const res = await videoService.togglePin(video._id, !isPinned);
-    if (!res.success) {
-      setVideos((prev) => prev.map((v) => v._id === video._id ? { ...v, pinned: isPinned } : v));
-      Alert.alert('Could not update pin', res.message || 'Try again later.');
-    } else {
-      loadRef.current();
+  // Patch the in-memory grid entry for the currently-open sheet so a toggle
+  // is reflected immediately after the API round-trip. Also update
+  // actionsVideo so the sheet's local toggle state stays in sync.
+  const patchVideo = useCallback((videoId, patch) => {
+    setVideos((prev) => prev.map((v) => v._id === videoId ? { ...v, ...patch } : v));
+    setActionsVideo((prev) => (prev && prev._id === videoId) ? { ...prev, ...patch } : prev);
+  }, []);
+
+  // Generic optimistic toggle: mutates local state first, calls the API,
+  // rolls back on failure and surfaces the server message. Returns the
+  // patch object the sheet expects ({ [flagKey]: boolean }) so ManageReelSheet
+  // can update its own local mirror without an extra render pass.
+  const doToggle = useCallback(async (video, flagKey, currentValue, apiCall, resKey) => {
+    const next = !currentValue;
+    patchVideo(video._id, { [flagKey]: next });
+    const res = await apiCall(video._id, next);
+    if (!res?.success) {
+      patchVideo(video._id, { [flagKey]: currentValue });
+      Alert.alert('Could not update', res?.message || 'Try again later.');
+      throw new Error(res?.message || 'Toggle failed');
+    }
+    // Prefer the server-returned value in case it clamps (e.g. pin max-3).
+    const serverValue = typeof res[resKey] === 'boolean' ? res[resKey] : next;
+    if (serverValue !== next) patchVideo(video._id, { [flagKey]: serverValue });
+    return { [flagKey]: serverValue };
+  }, [patchVideo]);
+
+  const handleEdit             = (video) => navigation.navigate('EditReel', { video, returnTo: 'ProfileTab' });
+  // updateVideo returns { video } rather than a top-level boolean, so give
+  // doToggle a shim that lifts the flag out of the returned doc. doToggle
+  // then returns { [flagKey]: serverValue } — exactly the sheet's contract.
+  const handleToggleComments   = (video) => doToggle(video, 'allowComments', !!video.allowComments,
+    async (id, v) => { const r = await videoService.updateVideo(id, { allowComments: v }); return r?.success ? { ...r, allowComments: r.video?.allowComments } : r; }, 'allowComments');
+  const handleToggleDownload   = (video) => doToggle(video, 'allowDownload', !!video.allowDownload,
+    async (id, v) => { const r = await videoService.updateVideo(id, { allowDownload: v }); return r?.success ? { ...r, allowDownload: r.video?.allowDownload } : r; }, 'allowDownload');
+  const handleTogglePin        = (video) => doToggle(video, 'pinned',         !!video.pinned,        (id, v) => videoService.togglePin(id, v),                          'pinned');
+  const handleToggleHideLikeC  = (video) => doToggle(video, 'hideLikeCount',  !!video.hideLikeCount,  (id, v) => videoService.toggleLikeCountVisibility(id, v),          'hideLikeCount');
+  const handleToggleHideShareC = (video) => doToggle(video, 'hideShareCount', !!video.hideShareCount, (id, v) => videoService.toggleShareCountVisibility(id, v),         'hideShareCount');
+
+  // Archive returns from the sheet with the new isArchived boolean; when
+  // archived, remove the tile immediately (it moved to /archived).
+  const handleToggleArchive = async (video) => {
+    const current = !!video.isArchived;
+    const next    = !current;
+    if (next) {
+      // Archiving — optimistically remove from the profile grid.
+      setVideos((prev) => prev.filter((v) => v._id !== video._id));
+    }
+    const res = await videoService.toggleArchive(video._id, next);
+    if (!res?.success) {
+      if (next) loadRef.current(); // put it back on failure
+      Alert.alert('Archive failed', res?.message || 'Try again later.');
+      throw new Error(res?.message || 'Archive failed');
+    }
+    // Keep actionsVideo (the sheet's `video` prop) in sync — without this,
+    // tapping Archive then Restore inside the same open sheet would compute
+    // `current` from the stale prop and fire a second archive request.
+    setActionsVideo((prev) => (prev && prev._id === video._id) ? { ...prev, isArchived: res.isArchived } : prev);
+    // On restore, reload the grid so the video reappears.
+    if (!res.isArchived) loadRef.current();
+    return { isArchived: res.isArchived };
+  };
+
+  // Download uses the existing FileSystem+Share pattern from MoreSheet.
+  // No allowDownload gate here: this handler is only reachable from the
+  // owner's Manage sheet, and the owner can always save their own reel.
+  const handleDownload = async (video) => {
+    if (!video.videoUrl) {
+      Alert.alert('Download failed', 'No downloadable URL on this video.');
+      return;
+    }
+    try {
+      const filename = `truevision-${video._id || Date.now()}.mp4`;
+      const target   = `${FileSystem.cacheDirectory}${filename}`;
+      Alert.alert('Downloading', 'Saving to your share sheet…');
+      const { uri } = await FileSystem.downloadAsync(video.videoUrl, target);
+      await Share.share({ url: uri, message: 'Saved video' });
+    } catch (e) {
+      Alert.alert('Download failed', e.message || 'Try again later.');
     }
   };
 
-  const handleDeleteAction = async () => {
-    const video = actionsVideo;
-    if (!video) return;
+  const handleDelete = async (video) => {
     setVideos((prev) => prev.filter((v) => v._id !== video._id));
     const res = await videoService.deleteVideo(video._id);
     if (!res.success) {
@@ -291,6 +365,16 @@ export default function ProfileScreen({ navigation }) {
   const totalVideos    = (user?.totalVideos != null) ? user.totalVideos : videos.length;
   const followersCount = user?.followersCount ?? 0;
   const followingCount = user?.followingCount ?? 0;
+  // Pending follow requests (private accounts) — badge on the bell when the
+  // /users/me payload exposes the counter.
+  const pendingRequestsCount = user?.pendingRequestsCount ?? authUser?.pendingRequestsCount ?? 0;
+
+  // Followers / Following → shared FollowList screen.
+  const openFollowList = useCallback((mode) => {
+    const meId = user?._id || effectiveUserId;
+    if (!meId) return;
+    navigation.navigate('FollowList', { userId: meId, mode, username: user?.username });
+  }, [navigation, user?._id, user?.username, effectiveUserId]);
 
   // ── Header (renders inside FlatList so it scrolls with the grid) ────────
   const renderHeader = useCallback(() => (
@@ -309,8 +393,8 @@ export default function ProfileScreen({ navigation }) {
 
       <View style={S.statsRow}>
         <Stat value={totalVideos}    label="Videos"    colors={colors} />
-        <Stat value={followersCount} label="Followers" colors={colors} />
-        <Stat value={followingCount} label="Following" colors={colors} />
+        <Stat value={followersCount} label="Followers" colors={colors} onPress={() => openFollowList('followers')} />
+        <Stat value={followingCount} label="Following" colors={colors} onPress={() => openFollowList('following')} />
       </View>
 
       <View style={[S.tabsRow, { borderTopColor: colors.divider }]}>
@@ -338,7 +422,7 @@ export default function ProfileScreen({ navigation }) {
         </TouchableOpacity>
       </View>
     </View>
-  ), [user, totalVideos, followersCount, followingCount, activeTab, colors]);
+  ), [user, totalVideos, followersCount, followingCount, activeTab, colors, openFollowList]);
 
   // ── Render the body based on state machine ─────────────────────────────
   const renderItem = useCallback(({ item, index }) => (
@@ -384,8 +468,15 @@ export default function ProfileScreen({ navigation }) {
       <View style={[S.topHeader, { backgroundColor: colors.bg, borderBottomColor: colors.divider }]}>
         <Text style={[S.topTitle, { color: colors.text }]}>Profile</Text>
         <View style={S.topActions}>
-          <TouchableOpacity style={S.topBtn} hitSlop={S.hit}>
-            <Ionicons name="notifications-outline" size={22} color={colors.text} />
+          <TouchableOpacity
+            style={S.topBtn}
+            hitSlop={S.hit}
+            onPress={() => navigation.navigate('FollowRequests')}
+          >
+            <View>
+              <Ionicons name="notifications-outline" size={22} color={colors.text} />
+              {pendingRequestsCount > 0 && <View style={S.bellBadge} />}
+            </View>
           </TouchableOpacity>
           <TouchableOpacity style={S.topBtn} hitSlop={S.hit} onPress={() => setShowMore(true)}>
             <Ionicons name="ellipsis-vertical" size={22} color={colors.text} />
@@ -433,15 +524,23 @@ export default function ProfileScreen({ navigation }) {
         onClose={() => setShowMore(false)}
         onSettings={() => navigation.navigate('Settings')}
         onHelp={() => navigation.navigate('HelpSupport')}
+        onArchived={() => navigation.navigate('ArchivedReels')}
         onLogout={async () => { await logout(); }}
       />
 
-      <VideoActionsSheet
+      <ManageReelSheet
         visible={!!actionsVideo}
-        isPinned={!!actionsVideo?.pinned}
+        video={actionsVideo}
         onClose={() => setActionsVideo(null)}
-        onPin={handlePinAction}
-        onDelete={handleDeleteAction}
+        onEdit={handleEdit}
+        onToggleComments={handleToggleComments}
+        onToggleDownload={handleToggleDownload}
+        onTogglePin={handleTogglePin}
+        onToggleHideLikeCount={handleToggleHideLikeC}
+        onToggleHideShareCount={handleToggleHideShareC}
+        onDownload={handleDownload}
+        onToggleArchive={handleToggleArchive}
+        onDelete={handleDelete}
       />
     </View>
   );
@@ -501,6 +600,12 @@ const S = StyleSheet.create({
   topTitle:   { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   topActions: { flexDirection: 'row' },
   topBtn:     { padding: 6, marginLeft: 6 },
+  // Small red dot on the bell when there are pending follow requests.
+  bellBadge:  {
+    position: 'absolute', top: -1, right: -1,
+    width: 9, height: 9, borderRadius: 4.5,
+    backgroundColor: '#ef4444',
+  },
 
   profileBlock: { alignItems: 'center', paddingTop: 24, paddingHorizontal: 22 },
   ringOuter:    { alignItems: 'center', justifyContent: 'center', marginBottom: 14 },

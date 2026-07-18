@@ -13,6 +13,8 @@ import {
   StyleSheet, Dimensions, ActivityIndicator,
 } from 'react-native';
 import AsyncStorage          from '@react-native-async-storage/async-storage';
+import * as FileSystem       from 'expo-file-system';
+import { useNavigation }     from '@react-navigation/native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { Image as ExpoImage } from 'expo-image';
 import { useEvent }          from 'expo';
@@ -21,11 +23,15 @@ import { Ionicons }          from '@expo/vector-icons';
 import ActionButtons         from './ActionButtons';
 import CaptionSection        from './CaptionSection';
 import MoreSheet             from './MoreSheet';
+import ManageReelSheet       from './ManageReelSheet';
 import InfoButton            from '../video/InfoButton';
 import VideoInfoPanel        from '../video/VideoInfoPanel';
 import videoService          from '../../services/VideoService';
+import userService           from '../../services/UserService';
 import { buildFallbackChain } from '../../utils/videoQuality';
 import usePreferences        from '../../hooks/usePreferences';
+import useNetworkStatus      from '../../hooks/useNetworkStatus';
+import { useAuth }           from '../../context/AuthContext';
 
 // Local-only save state for external imports (Pixabay etc). Those videos
 // aren't in our DB, so we can't persist saves server-side.
@@ -78,6 +84,42 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   // state only because the videos aren't in our database.
   const isExternal = item.source && item.source !== 'truevision';
   const { prefs } = usePreferences();
+  const { user }  = useAuth();
+  const navigation = useNavigation();
+  const net = useNetworkStatus();
+
+  // ── Content-preference driven playback ─────────────────────────────────
+  // autoplay OFF  → videos never start on their own; the user taps play.
+  // hdOnWifi ON   → on cellular we behave like Data Saver (lower rungs first).
+  // dataSaver ON  → always prefer smaller rungs.
+  const autoplayPref   = prefs?.content?.autoplay !== false; // default ON
+  const dataSaverPref  = prefs?.content?.dataSaver === true;
+  const hdOnWifiPref   = prefs?.content?.hdOnWifi !== false;  // default ON
+  // "HD on Wi-Fi only" means: throttle when NOT on Wi-Fi.
+  const cellularThrottle = hdOnWifiPref && net.isCellular;
+  const effectiveDataSaver = dataSaverPref || cellularThrottle;
+
+  // Owner detection — the "Manage your reel" sheet is only ever shown for
+  // videos this user uploaded. External videos are never owned.
+  const ownerId  = item.userId?._id || item.userId;
+  const isOwner  = !isExternal && !!user?._id && !!ownerId && String(user._id) === String(ownerId);
+
+  // Mirror the mutable owner-facing flags so the sheet's toggles reflect
+  // reality instantly. Falls back to the item's own values when the sheet
+  // is first opened.
+  const [ownerFlags, setOwnerFlags] = useState({
+    allowComments:  item.allowComments  === undefined ? true : !!item.allowComments,
+    allowDownload:  item.allowDownload  === undefined ? true : !!item.allowDownload,
+    pinned:         !!item.pinned,
+    hideLikeCount:  !!item.hideLikeCount,
+    hideShareCount: !!item.hideShareCount,
+    isArchived:     !!item.isArchived,
+  });
+
+  // Memoized merge for the sheet's `video` prop — without this a fresh
+  // object literal is produced every render, which retriggers the sheet's
+  // sync-effect mid-toggle and can overwrite in-flight optimistic state.
+  const sheetVideo = useMemo(() => ({ ...item, ...ownerFlags }), [item, ownerFlags]);
 
   // ── Video player with graceful degradation ─────────────────────────────
   //
@@ -100,8 +142,8 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   const LOAD_TIMEOUT_MS = 12000; // per-rung ceiling
 
   const chain = useMemo(
-    () => buildFallbackChain(item, { dataSaver: prefs?.content?.dataSaver }),
-    [item, prefs?.content?.dataSaver],
+    () => buildFallbackChain(item, { dataSaver: effectiveDataSaver }),
+    [item, effectiveDataSaver],
   );
   const [rung, setRung]         = useState(0);           // index into `chain`
   const [playError, setPlayError] = useState(null);
@@ -195,16 +237,31 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   // isFocused becomes false when the user navigates to another tab — that
   // pauses the video and prevents background playback.
   const [userPaused, setUserPaused] = useState(false);
+
+  // ── Auto-play preference gate ──────────────────────────────────────────
+  // When autoplay is OFF, a video that scrolls into view must NOT start on
+  // its own — the user taps to begin. `manualStart` records that explicit tap
+  // and resets every time a NEW video becomes active, so the gate re-arms per
+  // reel. When autoplay is ON this has no effect.
+  const [manualStart, setManualStart] = useState(false);
   useEffect(() => {
-    if (isActive && isFocused && !userPaused && !playError) player.play();
+    // Re-arm the gate whenever this card becomes the active one.
+    if (isActive && !autoplayPref) setManualStart(false);
+  }, [isActive, autoplayPref]);
+
+  const allowedToPlay = autoplayPref || manualStart;
+
+  useEffect(() => {
+    if (isActive && isFocused && !userPaused && !playError && allowedToPlay) player.play();
     else player.pause();
-  }, [isActive, isFocused, userPaused, playError, player]);
+  }, [isActive, isFocused, userPaused, playError, allowedToPlay, player]);
 
   // ── Social state ────────────────────────────────────────────────────────
   const [isLiked,     setIsLiked]     = useState(item.isLiked     ?? false);
   const [isSaved,     setIsSaved]     = useState(item.isSaved     ?? false);
   const [isReposted,  setIsReposted]  = useState(item.isReposted  ?? false);
-  const [isFollowing, setIsFollowing] = useState(item.isFollowing ?? false);
+  // Follow is three-state: 'none' | 'following' | 'requested' (private accounts).
+  const [followStatus, setFollowStatus] = useState(item.isFollowing ? 'following' : 'none');
   const [likes,       setLikes]       = useState(item.likesCount   ?? item.likes   ?? 0);
   const [saves,       setSaves]       = useState(item.savesCount   ?? item.saves   ?? 0);
   const [shares,      setShares]      = useState(item.sharesCount  ?? item.shares  ?? 0);
@@ -241,15 +298,23 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
       setBurst({ visible: false, x: locationX, y: locationY });
       setTimeout(() => setBurst({ visible: true, x: locationX, y: locationY }), 10);
     } else {
-      // Single tap → pause/play
-      setUserPaused(p => {
+      // Single tap → play/pause.
+      // If autoplay is off and this reel hasn't been manually started yet, the
+      // first tap STARTS it (satisfies the gate) rather than toggling pause.
+      if (!autoplayPref && !manualStart) {
+        setManualStart(true);
         pauseAnim.setValue(1);
         Animated.timing(pauseAnim, { toValue: 0, duration: 600, delay: 300, useNativeDriver: true }).start();
-        return !p;
-      });
+      } else {
+        setUserPaused(p => {
+          pauseAnim.setValue(1);
+          Animated.timing(pauseAnim, { toValue: 0, duration: 600, delay: 300, useNativeDriver: true }).start();
+          return !p;
+        });
+      }
     }
     lastTap.current = now;
-  }, [isLiked, item._id, item.id, isExternal, pauseAnim]);
+  }, [isLiked, item._id, item.id, isExternal, pauseAnim, autoplayPref, manualStart]);
 
   // ── Action handlers ─────────────────────────────────────────────────────
   const handleLike = () => {
@@ -308,9 +373,96 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
     if (typeof res.repostsCount === 'number') setReposts(res.repostsCount);
   };
 
-  const handleFollow = () => {
-    setIsFollowing(true);
-    // Persistence for follow is part of the (future) follow API — local only for now.
+  const handleFollow = async () => {
+    if (isOwner || followStatus !== 'none') return;
+    // External/stock videos have no TrueVision account behind them — keep the
+    // old local-only behaviour so the button still responds.
+    if (isExternal || !ownerId) { setFollowStatus('following'); return; }
+    const prev = followStatus;
+    setFollowStatus('following'); // optimistic — server may downgrade to 'requested'
+    const res = await userService.followUser(String(ownerId));
+    if (res?.success) {
+      setFollowStatus(res.status === 'requested' ? 'requested' : 'following');
+    } else {
+      setFollowStatus(prev);
+      Alert.alert('Could not follow', res?.message || 'Try again later.');
+    }
+  };
+
+  // ── Owner-only "Manage your reel" handlers ─────────────────────────────
+  // Every toggle handler mutates the local mirror, calls the API, and rolls
+  // back on failure. The `resKey` argument is the property the server
+  // returns to communicate the authoritative post-toggle value.
+  const runOwnerToggle = useCallback(async (flagKey, apiCall, resKey) => {
+    const before = ownerFlags[flagKey];
+    const next   = !before;
+    setOwnerFlags((f) => ({ ...f, [flagKey]: next }));
+    const res = await apiCall(item._id || item.id, next);
+    if (!res?.success) {
+      setOwnerFlags((f) => ({ ...f, [flagKey]: before }));
+      Alert.alert('Could not update', res?.message || 'Try again later.');
+      throw new Error(res?.message || 'Toggle failed');
+    }
+    const serverVal = typeof res[resKey] === 'boolean' ? res[resKey] : next;
+    if (serverVal !== next) setOwnerFlags((f) => ({ ...f, [flagKey]: serverVal }));
+    return { [flagKey]: serverVal };
+  }, [item._id, item.id, ownerFlags]);
+
+  const handleOwnerEdit = () => navigation.navigate('EditReel', { video: item });
+
+  // updateVideo returns { video } rather than a top-level boolean; the shim
+  // lifts the flag out of the returned doc so runOwnerToggle can return the
+  // server-authoritative { [flagKey]: boolean } the sheet expects.
+  const handleOwnerToggleComments = () =>
+    runOwnerToggle('allowComments',
+      async (id, v) => { const r = await videoService.updateVideo(id, { allowComments: v }); return r?.success ? { ...r, allowComments: r.video?.allowComments } : r; },
+      'allowComments');
+
+  const handleOwnerToggleDownload = () =>
+    runOwnerToggle('allowDownload',
+      async (id, v) => { const r = await videoService.updateVideo(id, { allowDownload: v }); return r?.success ? { ...r, allowDownload: r.video?.allowDownload } : r; },
+      'allowDownload');
+
+  const handleOwnerTogglePin        = () => runOwnerToggle('pinned',         videoService.togglePin,                    'pinned');
+  const handleOwnerToggleHideLikeC  = () => runOwnerToggle('hideLikeCount',  videoService.toggleLikeCountVisibility,    'hideLikeCount');
+  const handleOwnerToggleHideShareC = () => runOwnerToggle('hideShareCount', videoService.toggleShareCountVisibility,   'hideShareCount');
+
+  const handleOwnerArchive = async () => {
+    const before = ownerFlags.isArchived;
+    const next   = !before;
+    const res    = await videoService.toggleArchive(item._id || item.id, next);
+    if (!res?.success) {
+      Alert.alert('Could not update', res?.message || 'Try again later.');
+      throw new Error(res?.message || 'Archive failed');
+    }
+    setOwnerFlags((f) => ({ ...f, isArchived: res.isArchived }));
+    // Once archived, pop the video out of the current feed so it isn't
+    // sitting there with a confusing "restored?" state.
+    if (res.isArchived) onHide?.(item, 'archived');
+    return { isArchived: res.isArchived };
+  };
+
+  const handleOwnerDownload = async () => {
+    // Owner can always save their own reel — allowDownload only gates viewers.
+    if (!item.videoUrl) return;
+    try {
+      const filename = `truevision-${item._id || item.id || Date.now()}.mp4`;
+      const target   = `${FileSystem.cacheDirectory}${filename}`;
+      Alert.alert('Downloading', 'Saving to your share sheet…');
+      const { uri } = await FileSystem.downloadAsync(item.videoUrl, target);
+      await Share.share({ url: uri, message: 'Saved video' });
+    } catch (e) {
+      Alert.alert('Download failed', e.message || 'Try again later.');
+    }
+  };
+
+  const handleOwnerDelete = async () => {
+    const res = await videoService.deleteVideo(item._id || item.id);
+    if (!res?.success) {
+      Alert.alert('Delete failed', res?.message || 'Try again later.');
+      return;
+    }
+    onHide?.(item, 'deleted');
   };
 
   // ── Derived ─────────────────────────────────────────────────────────────
@@ -388,6 +540,17 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
             </View>
           </Animated.View>
 
+          {/* Auto-play OFF: a persistent play affordance while the reel is
+              active but hasn't been manually started yet. */}
+          {isActive && isFocused && !playError && !autoplayPref && !manualStart && (
+            <View pointerEvents="none" style={S.tapToPlay}>
+              <View style={S.tapToPlayBtn}>
+                <Ionicons name="play" size={40} color="#fff" />
+              </View>
+              <Text style={S.tapToPlayText}>Tap to play</Text>
+            </View>
+          )}
+
           {/* Heart burst */}
           <HeartBurst visible={burst.visible} x={burst.x} y={burst.y} />
         </View>
@@ -410,13 +573,23 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
         isLiked={isLiked}
         isSaved={isSaved}
         isReposted={isReposted}
+        // Hide-count is enforced client-side: owner still sees the number,
+        // everyone else sees "Liked by others" / "Shared" instead. Backend
+        // additionally strips the numeric fields from the payload so a
+        // hostile client can't sniff them.
+        isOwner={isOwner}
+        hideLikeCount={ownerFlags.hideLikeCount}
+        hideShareCount={ownerFlags.hideShareCount}
         onLike={handleLike}
         onComment={onOpenComments}
         onShare={handleShare}
         onSave={handleSave}
         onRepost={handleRepost}
         onMore={() => setShowMore(true)}
-        onAvatarPress={() => {}}
+        // External/stock videos have no TrueVision profile to open.
+        onAvatarPress={() => {
+          if (!isExternal && ownerId) navigation.navigate('UserProfile', { userId: String(ownerId) });
+        }}
         style={{ bottom: bottomOffset + 100 }}
       />
 
@@ -425,7 +598,11 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
         username={creator}
         caption={caption}
         song={song}
-        isFollowing={isFollowing}
+        // Three-state chip: hidden for own uploads / already-following,
+        // muted "Requested" while a private-account request is pending,
+        // "Follow" otherwise. isFollowing kept for backward compat.
+        isFollowing={isOwner || followStatus !== 'none'}
+        followStatus={isOwner ? 'following' : followStatus}
         isVerified={isVerified}
         onFollow={handleFollow}
         style={{ bottom: bottomOffset + 14 }}
@@ -436,13 +613,30 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
         <InfoButton onPress={() => setShowInfo(true)} />
       </View>
 
-      {/* ── Three-dot menu sheet ──────────────────────────────────────── */}
-      <MoreSheet
-        visible={showMore}
-        item={item}
-        onClose={() => setShowMore(false)}
-        onHide={(it, reason) => onHide?.(it, reason)}
-      />
+      {/* ── Three-dot menu sheet — branches on ownership ─────────────── */}
+      {isOwner ? (
+        <ManageReelSheet
+          visible={showMore}
+          video={sheetVideo}
+          onClose={() => setShowMore(false)}
+          onEdit={handleOwnerEdit}
+          onToggleComments={handleOwnerToggleComments}
+          onToggleDownload={handleOwnerToggleDownload}
+          onTogglePin={handleOwnerTogglePin}
+          onToggleHideLikeCount={handleOwnerToggleHideLikeC}
+          onToggleHideShareCount={handleOwnerToggleHideShareC}
+          onDownload={handleOwnerDownload}
+          onToggleArchive={handleOwnerArchive}
+          onDelete={handleOwnerDelete}
+        />
+      ) : (
+        <MoreSheet
+          visible={showMore}
+          item={item}
+          onClose={() => setShowMore(false)}
+          onHide={(it, reason) => onHide?.(it, reason)}
+        />
+      )}
 
       {/* ── Info panel (Fact / News / Opinion) ────────────────────────── */}
       <VideoInfoPanel
@@ -460,6 +654,9 @@ const S = StyleSheet.create({
   loader:       { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   pauseFlash:   { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   pauseBg:      { backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 50, padding: 16 },
+  tapToPlay:    { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  tapToPlayBtn: { backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 50, padding: 20, marginBottom: 10 },
+  tapToPlayText:{ color: '#fff', fontSize: 13, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 4 },
   progressTrack:{ position: 'absolute', left: 0, right: 0, height: 2, backgroundColor: 'rgba(255,255,255,0.2)', zIndex: 20 },
   progressFill: { height: '100%', backgroundColor: '#fff' },
 

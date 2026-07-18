@@ -63,7 +63,7 @@ export const SettingsRow = ({
   );
 };
 
-export const SwitchRow = ({ icon, label, sub, value, onValueChange, last }) => {
+export const SwitchRow = ({ icon, label, sub, value, onValueChange, last, disabled = false }) => {
   const { colors } = useTheme();
   return (
     <SettingsRow
@@ -76,6 +76,7 @@ export const SwitchRow = ({ icon, label, sub, value, onValueChange, last }) => {
         <Switch
           value={!!value}
           onValueChange={onValueChange}
+          disabled={disabled}
           trackColor={{ true: colors.accent, false: colors.divider }}
           thumbColor="#fff"
           ios_backgroundColor={colors.divider}

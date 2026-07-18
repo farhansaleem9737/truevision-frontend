@@ -1,18 +1,40 @@
 // truevision/screens/activity/SharedVideosScreen.js
 //
-// Timeline of share events. Each row is a (video, platform, sharedAt) tuple
-// — re-sharing the same video to two platforms = two tiles. Backed by
-// /api/activity/shared-videos.
+// Timeline of share events. Each row is a (video, method, recipient, sharedAt)
+// tuple — re-sharing the same video twice = two tiles. Backed by
+// /api/activity/shared-videos. Newer rows also carry `recipient`
+// ({_id, username, fullName, profileImage} | null) and `method` (e.g. 'chat',
+// 'system_share'); older rows only have `platform` — both shapes are handled.
 
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, StatusBar, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { Image as ExpoImage } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../../components/settings/ScreenHeader';
 import VideoTileGrid from '../../components/activity/VideoTileGrid';
 import { useTheme } from '../../context/ThemeContext';
 import activityService from '../../services/ActivityService';
+
+// Compact relative timestamp for the per-tile share-date pill.
+const timeAgo = (date) => {
+  if (!date) return '';
+  const diff = (Date.now() - new Date(date).getTime()) / 1000;
+  if (diff < 60)     return 'now';
+  if (diff < 3600)   return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400)  return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+
+// Human-friendly label for the share-method badge.
+const methodLabel = (m) => {
+  if (!m) return '';
+  if (m === 'chat')         return 'Chat';
+  if (m === 'system_share') return 'Shared externally';
+  return m.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+};
 
 export default function SharedVideosScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -28,17 +50,25 @@ export default function SharedVideosScreen({ navigation }) {
   const load = useCallback(async (p = 1) => {
     const res = await activityService.getSharedVideos(p, 21);
     if (res?.success) {
-      // Flatten { _id, video, platform, sharedAt } → enriched video object
-      // carrying the share metadata for tile rendering + delete-by-row.
+      // Flatten each share row → enriched video object carrying the share
+      // metadata for tile rendering + delete-by-row. `recipient`/`method`
+      // only exist on newer rows; older rows fall back to `platform`.
       const videos = (res.items || [])
         .filter((r) => r.video)
         .map((r) => ({
           ...r.video,
-          _shareId:  r._id,
-          _platform: r.platform,
-          _sharedAt: r.sharedAt,
+          _shareId:   r._id,
+          _method:    r.method || r.platform || '',
+          _recipient: r.recipient || null,
+          _sharedAt:  r.sharedAt,
         }));
-      setItems((prev) => (p === 1 ? videos : [...prev, ...videos]));
+      setItems((prev) => {
+        if (p === 1) return videos;
+        // The API can re-serve rows across page boundaries — dedupe appended
+        // pages by share id so React keys stay unique.
+        const seen = new Set(prev.map((v) => v._shareId));
+        return [...prev, ...videos.filter((v) => !seen.has(v._shareId))];
+      });
       setPage(res.pagination?.page || p);
       setHasMore((res.pagination?.page || p) < (res.pagination?.pages || 1));
     }
@@ -80,11 +110,22 @@ export default function SharedVideosScreen({ navigation }) {
     activityService.deleteShare(shareId);
   };
 
-  // Short, human-friendly platform label drawn on the badge.
-  const platformLabel = (p) => {
-    if (!p) return '';
-    if (p === 'system_share') return 'share';
-    return p.replace(/_/g, ' ');
+  // Open in the player with the displayed list. The player keys items by
+  // video _id, so collapse duplicate shares of the same video first — then
+  // locate the tapped tile in the deduped list.
+  const openVideo = (video) => {
+    const seen = new Set();
+    const unique = items.filter((v) => {
+      const k = String(v._id);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const idx = unique.findIndex((v) => String(v._id) === String(video._id));
+    navigation.navigate('VideoPlayer', {
+      videos: unique,
+      initialIndex: Math.max(0, idx),
+    });
   };
 
   return (
@@ -107,7 +148,7 @@ export default function SharedVideosScreen({ navigation }) {
       ) : (
         <VideoTileGrid
           items={items}
-          onPressItem={(v) => navigation.navigate('VideoPlayer', { videoId: v._id })}
+          onPressItem={openVideo}
           refreshing={refreshing}
           onRefresh={onRefresh}
           onEndReached={onEndReached}
@@ -116,15 +157,43 @@ export default function SharedVideosScreen({ navigation }) {
           emptyTitle="No shared videos yet"
           emptySub="Videos you share will show up here."
           badgeIcon="paper-plane"
-          badgeValueOf={(v) => platformLabel(v._platform)}
+          badgeValueOf={(v) => methodLabel(v._method)}
           renderOverlay={(v) => (
-            <TouchableOpacity
-              onPress={() => removeOne(v._shareId)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={S.deleteBadge}
-            >
-              <Ionicons name="close" size={14} color="#fff" />
-            </TouchableOpacity>
+            <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+              {v._recipient ? (
+                <View style={S.recipientStrip}>
+                  {v._recipient.profileImage ? (
+                    <ExpoImage
+                      source={{ uri: v._recipient.profileImage }}
+                      style={S.recipAvatar}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                    />
+                  ) : (
+                    <View style={[S.recipAvatar, S.recipFallback]}>
+                      <Text style={S.recipInitial}>
+                        {(v._recipient.username || v._recipient.fullName || '?').charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                  <Text style={S.recipText} numberOfLines={1}>
+                    to @{v._recipient.username || 'user'}
+                  </Text>
+                </View>
+              ) : null}
+              {/* Share date — rendered for every row, including legacy ones
+                  with no recipient. */}
+              <View style={S.datePill}>
+                <Text style={S.dateText}>{timeAgo(v._sharedAt)}</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => removeOne(v._shareId)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={S.deleteBadge}
+              >
+                <Ionicons name="close" size={14} color="#fff" />
+              </TouchableOpacity>
+            </View>
           )}
         />
       )}
@@ -141,4 +210,24 @@ const S = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center', justifyContent: 'center',
   },
+  recipientStrip: {
+    position: 'absolute', top: 6, left: 6,
+    maxWidth: '72%',
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10,
+    paddingHorizontal: 5, paddingVertical: 3,
+  },
+  recipAvatar: { width: 14, height: 14, borderRadius: 7, marginRight: 4 },
+  recipFallback: {
+    backgroundColor: '#64748b',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  recipInitial: { color: '#fff', fontSize: 8, fontWeight: '800' },
+  recipText: { color: '#fff', fontSize: 9.5, fontWeight: '700', flexShrink: 1 },
+  datePill: {
+    position: 'absolute', right: 6, bottom: 6,
+    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10,
+    paddingHorizontal: 6, paddingVertical: 3,
+  },
+  dateText: { color: '#fff', fontSize: 9.5, fontWeight: '700' },
 });

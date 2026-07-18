@@ -1,10 +1,10 @@
 // truevision/screens/activity/ViewedProfilesScreen.js
 //
 // Lists profiles the current user has recently visited. Backed by
-// /api/activity/viewed-profiles. Recording happens via
-// activityService.recordProfileView(profileId) — wire that from wherever
-// you open another user's profile (no automatic hook exists yet because
-// the app currently has no public-profile screen).
+// /api/activity/viewed-profiles. Recording is wired from UserProfileScreen —
+// activityService.recordProfileView(profileId) fires whenever you open
+// another user's profile. Tapping a row here navigates back to that same
+// UserProfile screen.
 
 import { useCallback, useState } from 'react';
 import {
@@ -91,7 +91,11 @@ export default function ViewedProfilesScreen({ navigation }) {
   const renderItem = ({ item }) => {
     const u = item.profile;
     return (
-      <View style={[S.row, { borderBottomColor: colors.divider }]}>
+      <TouchableOpacity
+        onPress={() => navigation.navigate('UserProfile', { userId: u._id })}
+        activeOpacity={0.7}
+        style={[S.row, { borderBottomColor: colors.divider }]}
+      >
         {u.profileImage ? (
           <Image source={{ uri: u.profileImage }} style={S.avatar} />
         ) : (
@@ -112,7 +116,7 @@ export default function ViewedProfilesScreen({ navigation }) {
         <TouchableOpacity onPress={() => removeOne(u._id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Ionicons name="close" size={20} color={colors.textDim} />
         </TouchableOpacity>
-      </View>
+      </TouchableOpacity>
     );
   };
 

@@ -14,8 +14,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import userService  from '../services/UserService';
 import { useAuth }  from '../context/AuthContext';
+import { emitFeedRefresh } from '../services/feedEvents';
 
 const CACHE_KEY = '@truevision:preferences';
+
+// Preference paths that change what the feed returns. A successful save of any
+// of these triggers a Home-feed refetch (the backend has already cleared the
+// cache by then). Playback-only paths — content.autoplay / hdOnWifi /
+// dataSaver — are intentionally absent: they never affect recommendations.
+const RECOMMENDATION_PATHS = new Set([
+  'content.personalizedRecs',
+  'content.hideSensitive',
+  'content.interestedTopics',
+]);
 
 const DEFAULT_PREFS = {
   privacy: {
@@ -123,6 +134,16 @@ export default function usePreferences() {
       // Also reflect into the in-memory user so other screens see it
       updateUser?.({ preferences: res.preferences });
     }
+
+    // The server has already cleared this user's feed cache (awaited) before
+    // replying success for a recommendation-affecting change. Now that it's
+    // safe, tell the Home feed to refetch so the user never sees stale
+    // recommendations. Playback-only toggles don't affect the feed and are
+    // deliberately not broadcast.
+    if (RECOMMENDATION_PATHS.has(path)) {
+      emitFeedRefresh(path);
+    }
+
     return { success: true };
   }, [prefs, updateUser]);
 
