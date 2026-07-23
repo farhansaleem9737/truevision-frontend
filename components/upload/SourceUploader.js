@@ -127,7 +127,15 @@ export default function SourceUploader({
     setUploading(false);
 
     if (up.success) {
-      append(up);
+      // Store only the schema fields (mirror pickImage) — not the transport
+      // envelope (success flag etc.) that uploadAttachment returns.
+      append({
+        url:      up.url,
+        publicId: up.publicId,
+        type:     up.type,
+        name:     up.name,
+        size:     up.size,
+      });
     } else {
       Alert.alert('Upload failed', up.message || 'Could not upload document.');
     }

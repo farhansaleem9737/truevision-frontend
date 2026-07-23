@@ -9,8 +9,19 @@
 
 import Constants from 'expo-constants';
 
-// ── Production URL (update this when you deploy) ────────────────────────────
-const PROD_API_URL = 'https://api.truevision.app';
+// ── Production URL ──────────────────────────────────────────────────────────
+// Read from EXPO_PUBLIC_API_URL (set it in truevision/.env or the EAS build
+// profile) — inlined at bundle time by Expo. The hardcoded fallback below is a
+// PLACEHOLDER domain: if a production build ships without the env var, every
+// API call would silently target a domain that doesn't exist, so we fail
+// loudly in the console rather than silently breaking the whole app.
+const PROD_API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://api.truevision.app';
+if (!__DEV__ && !process.env.EXPO_PUBLIC_API_URL) {
+  console.error(
+    '[Config] EXPO_PUBLIC_API_URL is not set — production build is pointing at ' +
+    'the placeholder domain and NO backend feature will work. Set it in .env / EAS.',
+  );
+}
 
 // ── Backend port (must match Backend/.env PORT) ─────────────────────────────
 const SERVER_PORT = 5000;

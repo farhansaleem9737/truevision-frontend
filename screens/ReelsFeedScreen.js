@@ -20,6 +20,7 @@ import { useIsFocused }      from '@react-navigation/native';
 import { Ionicons }          from '@expo/vector-icons';
 import ReelCard              from '../components/reel/ReelCard';
 import CommentsSheet         from '../components/comments/CommentsSheet';
+import useReelPrefetch       from '../hooks/useReelPrefetch';
 
 const { height } = Dimensions.get('window');
 // Must match the BottomTabNavigator tab-bar height so the action column / caption
@@ -43,6 +44,9 @@ export default function ReelsFeedScreen({ navigation, route }) {
     Math.max(0, videos.length - 1),
   );
   const [activeIndex, setActiveIndex] = useState(safeInitial);
+
+  // Smart preload: warm the next 1-2 videos + thumbnails for instant swipes.
+  useReelPrefetch(videos, activeIndex);
 
   const flatListRef = useRef(null);
 

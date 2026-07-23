@@ -38,7 +38,10 @@ const lightColors = {
   statusBarStyle:'dark-content',
   statusBarBg:  '#ffffff',
   // Accents (don't change per mode)
-  accent:       '#3b82f6',
+  // Brand accent is purple (#6C5CFF) — matches the bottom tab bar, Upload
+  // button, and the Search surface. Previously blue (#3b82f6), which leaked a
+  // stray blue tint into profiles (avatar fallback, Follow button, badges).
+  accent:       '#6C5CFF',
   danger:       '#ef4444',
 };
 
@@ -61,8 +64,8 @@ const darkColors = {
   // Status bar
   statusBarStyle:'light-content',
   statusBarBg:  '#0b0b0d',
-  // Accents
-  accent:       '#60a5fa',
+  // Accents — brand purple, a touch lighter for contrast on the dark surface.
+  accent:       '#8B7CFF',
   danger:       '#f87171',
 };
 

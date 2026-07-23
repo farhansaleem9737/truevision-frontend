@@ -19,7 +19,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../components/settings/ScreenHeader';
+import { useConfirm } from '../components/common/ConfirmProvider';
 import { useTheme } from '../context/ThemeContext';
+import { useProfileNavigation } from '../utils/profileNavigation';
 import { useAuth } from '../context/AuthContext';
 import userService from '../services/UserService';
 
@@ -35,6 +37,8 @@ export default function BlockedUsersScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { user: me } = useAuth();
+  const openProfile = useProfileNavigation();
+  const confirm = useConfirm();
 
   // 'blocked' = manage existing blocks · 'block' = search everyone to block
   const [mode, setMode] = useState('blocked');
@@ -132,16 +136,15 @@ export default function BlockedUsersScreen({ navigation }) {
   };
 
   // ── Unblock (optimistic, rollback on failure) ──────────────────────────
-  const confirmUnblock = (u) => {
+  const confirmUnblock = async (u) => {
     const name = displayHandle(u) || u.fullName || 'this user';
-    Alert.alert(
-      `Unblock ${name}?`,
-      'They will be able to find your profile and interact with you again.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Unblock', onPress: () => doUnblock(u) },
-      ],
-    );
+    const ok = await confirm({
+      title:       `Unblock ${name}?`,
+      message:     'They will be able to find your profile and interact with you again.',
+      confirmText: 'Unblock',
+      icon:        'lock-open-outline',
+    });
+    if (ok) doUnblock(u);
   };
 
   const doUnblock = async (u) => {
@@ -157,16 +160,16 @@ export default function BlockedUsersScreen({ navigation }) {
   };
 
   // ── Block (from global search) ─────────────────────────────────────────
-  const confirmBlock = (u) => {
+  const confirmBlock = async (u) => {
     const name = displayHandle(u) || u.fullName || 'this user';
-    Alert.alert(
-      `Block ${name}?`,
-      "They won't be able to message you, comment on your videos, or find your profile.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Block', style: 'destructive', onPress: () => doBlock(u) },
-      ],
-    );
+    const ok = await confirm({
+      title:       `Block ${name}?`,
+      message:     "They won't be able to message you, comment on your videos, or find your profile.",
+      confirmText: 'Block',
+      destructive: true,
+      icon:        'ban-outline',
+    });
+    if (ok) doBlock(u);
   };
 
   const doBlock = async (u) => {
@@ -212,7 +215,7 @@ export default function BlockedUsersScreen({ navigation }) {
   const renderBlockedRow = ({ item: u }) => (
     <TouchableOpacity
       activeOpacity={0.7}
-      onPress={() => navigation.navigate('UserProfile', { userId: u._id })}
+      onPress={() => openProfile(u._id)}
       style={[S.row, { borderBottomColor: colors.divider }]}
     >
       {renderAvatar(u)}
@@ -231,7 +234,7 @@ export default function BlockedUsersScreen({ navigation }) {
   const renderSearchRow = ({ item: u }) => (
     <TouchableOpacity
       activeOpacity={0.7}
-      onPress={() => navigation.navigate('UserProfile', { userId: u._id })}
+      onPress={() => openProfile(u._id)}
       style={[S.row, { borderBottomColor: colors.divider }]}
     >
       {renderAvatar(u)}

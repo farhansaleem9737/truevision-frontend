@@ -21,6 +21,7 @@ import ScreenHeader from '../components/settings/ScreenHeader';
 import OtpInput from '../components/security/OtpInput';
 import securityService from '../services/SecurityService';
 import { useTheme } from '../context/ThemeContext';
+import { useConfirm } from '../components/common/ConfirmProvider';
 
 // Compact country-code list — ordered by app audience, searchable.
 const COUNTRIES = [
@@ -47,6 +48,7 @@ const COUNTRIES = [
 export default function PhoneVerificationScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
+  const confirm = useConfirm();
   const otpRef = useRef(null);
 
   // Existing verified number (passed from SecurityScreen for display).
@@ -101,27 +103,23 @@ export default function PhoneVerificationScreen({ navigation, route }) {
     ]);
   };
 
-  const removeNumber = () => {
-    Alert.alert(
-      'Remove phone number',
-      `Remove ${existing?.countryCode || ''} ${existing?.number || ''} from your account?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove', style: 'destructive',
-          onPress: async () => {
-            setRemovingNum(true);
-            const res = await securityService.removePhone();
-            setRemovingNum(false);
-            if (res.success) {
-              navigation.navigate({ name: 'Security', params: { refresh: Date.now() }, merge: true });
-            } else {
-              Alert.alert('Could not remove', res.message || 'Try again later');
-            }
-          },
-        },
-      ],
-    );
+  const removeNumber = async () => {
+    const ok = await confirm({
+      title:       'Remove phone number',
+      message:     `Remove ${existing?.countryCode || ''} ${existing?.number || ''} from your account?`,
+      confirmText: 'Remove',
+      destructive: true,
+      icon:        'call-outline',
+    });
+    if (!ok) return;
+    setRemovingNum(true);
+    const res = await securityService.removePhone();
+    setRemovingNum(false);
+    if (res.success) {
+      navigation.navigate({ name: 'Security', params: { refresh: Date.now() }, merge: true });
+    } else {
+      Alert.alert('Could not remove', res.message || 'Try again later');
+    }
   };
 
   return (

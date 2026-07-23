@@ -72,13 +72,18 @@ function DiscoverStackNavigator() {
 
 // ─── Tab icons ───────────────────────────────────────────────────────────────
 
-const TabIcon = ({ name, focused, isUpload, colors }) => {
+// Tab accent colours (colour-only per the Upload redesign brief). Layout,
+// sizes and spacing are untouched — only these hex values changed.
+const TAB_ACTIVE   = '#6C5CFF'; // selected icon — primary purple
+const TAB_INACTIVE = '#7A7D8A'; // unselected icon
+
+const TabIcon = ({ name, focused, isUpload }) => {
   if (isUpload) {
     return (
       <View style={styles.uploadIconContainer}>
         <LinearGradient
-          colors={focused ? ['#3b82f6', '#2563eb'] : ['#4b5563', '#374151']}
-          style={styles.uploadIconGradient}
+          colors={focused ? ['#6C5CFF', '#4D63FF'] : ['#4b5563', '#374151']}
+          style={[styles.uploadIconGradient, focused && styles.uploadIconGradientActive]}
         >
           <Ionicons name="add" size={28} color="white" />
         </LinearGradient>
@@ -90,7 +95,7 @@ const TabIcon = ({ name, focused, isUpload, colors }) => {
       <Ionicons
         name={name}
         size={24}
-        color={focused ? colors.tabIconActive : colors.tabIcon}
+        color={focused ? TAB_ACTIVE : TAB_INACTIVE}
       />
     </View>
   );
@@ -116,7 +121,7 @@ export default function BottomTabNavigator() {
           else if (route.name === 'Upload')   { iconName = 'add'; isUpload = true; }
           else if (route.name === 'Chat')     iconName = focused ? 'chatbubble' : 'chatbubble-outline';
           else if (route.name === 'Profile')  iconName = focused ? 'person-circle' : 'person-circle-outline';
-          return <TabIcon name={iconName} focused={focused} isUpload={isUpload} colors={colors} />;
+          return <TabIcon name={iconName} focused={focused} isUpload={isUpload} />;
         },
         tabBarShowLabel: false,
         tabBarStyle: {
@@ -159,7 +164,12 @@ const styles = StyleSheet.create({
   uploadIconGradient: {
     width: 42, height: 42, borderRadius: 12,
     justifyContent: 'center', alignItems: 'center',
-    shadowColor: '#3b82f6', shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3, shadowRadius: 5, elevation: 6,
+    // Soft purple glow (colour-only change; size/offset unchanged).
+    shadowColor: '#6C5CFF', shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35, shadowRadius: 6, elevation: 6,
+  },
+  // Stronger outer glow when the Upload tab is selected. No size change.
+  uploadIconGradientActive: {
+    shadowColor: '#6C5CFF', shadowOpacity: 0.6, shadowRadius: 12, elevation: 10,
   },
 });

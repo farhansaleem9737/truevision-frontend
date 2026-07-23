@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../components/settings/ScreenHeader';
 import { Section, SettingsRow, SwitchRow } from '../components/settings/SettingsRow';
 import OtpInput from '../components/security/OtpInput';
+import { useConfirm } from '../components/common/ConfirmProvider';
 import securityService from '../services/SecurityService';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -39,6 +40,7 @@ export default function SecurityScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { user, logout } = useAuth();
+  const confirm = useConfirm();
   const otpRef = useRef(null);
 
   const [settings,   setSettings]   = useState(null);   // server snapshot
@@ -113,27 +115,23 @@ export default function SecurityScreen({ navigation, route }) {
   };
 
   // ── Logout everywhere ─────────────────────────────────────────────────────
-  const logoutAll = () => {
-    Alert.alert(
-      'Log out from all devices',
-      'Every signed-in device will be logged out immediately, including this one.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Log out everywhere', style: 'destructive',
-          onPress: async () => {
-            setLoggingOutAll(true);
-            const res = await securityService.logoutAll(false);
-            setLoggingOutAll(false);
-            if (res.success) {
-              await logout(); // clears local state → login screen
-            } else {
-              Alert.alert('Could not log out everywhere', res.message || 'Try again later.');
-            }
-          },
-        },
-      ],
-    );
+  const logoutAll = async () => {
+    const ok = await confirm({
+      title:       'Log out from all devices',
+      message:     'Every signed-in device will be logged out immediately, including this one.',
+      confirmText: 'Log out everywhere',
+      destructive: true,
+      icon:        'log-out-outline',
+    });
+    if (!ok) return;
+    setLoggingOutAll(true);
+    const res = await securityService.logoutAll(false);
+    setLoggingOutAll(false);
+    if (res.success) {
+      await logout(); // clears local state → login screen
+    } else {
+      Alert.alert('Could not log out everywhere', res.message || 'Try again later.');
+    }
   };
 
   const emailVerified = settings ? settings.emailVerified : !!user?.isVerified;

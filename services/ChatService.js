@@ -111,9 +111,18 @@ const chatService = {
 
   // ── Per-chat state ──────────────────────────────────────────────────────
   togglePinChat:    async (chatId) => (await api.patch(`/chats/${chatId}/pin`)).data,
-  toggleMuteChat:   async (chatId) => (await api.patch(`/chats/${chatId}/mute`)).data,
+  // duration: '8h' | '24h' | '1w' | 'always' | 'off' | undefined (plain toggle).
+  toggleMuteChat:   async (chatId, duration) =>
+    (await api.patch(`/chats/${chatId}/mute`, duration ? { duration } : {})).data,
   toggleArchive:    async (chatId) => (await api.patch(`/chats/${chatId}/archive`)).data,
-  clearChatHistory: async (chatId) => (await api.delete(`/chats/${chatId}/history`)).data,
+  // opts.undo:true removes the clear horizon again (restores the messages) —
+  // powers the "Undo" snackbar right after a clear.
+  clearChatHistory: async (chatId, { undo } = {}) =>
+    (await api.delete(`/chats/${chatId}/history`, undo ? { data: { undo: true } } : undefined)).data,
+
+  // Report a user to moderation. reason ∈ spam|harassment|fake|inappropriate|other.
+  reportUser: async (userId, reason, details) =>
+    (await api.post(`/users/${userId}/report`, { reason, details })).data,
 
   // ── Messages ────────────────────────────────────────────────────────────
   getMessages: async (chatId, { page = 1, before } = {}) => {

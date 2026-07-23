@@ -40,6 +40,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+// TODO (Expo SDK 55+): migrate `expo-av` Audio.Recording → `expo-audio`
+// (useAudioRecorder). Deprecated but functional on SDK 53/54 — keep until the
+// SDK upgrade to avoid a mid-development regression.
 import { Audio } from 'expo-av';
 
 // Gesture thresholds — tuned to feel WhatsApp-ish at 60 fps.

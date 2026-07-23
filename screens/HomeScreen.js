@@ -26,6 +26,7 @@ import CommentsSheet             from '../components/comments/CommentsSheet';
 import videoService              from '../services/VideoService';
 import pixabayService            from '../services/pixabayService';
 import usePreferences            from '../hooks/usePreferences';
+import useReelPrefetch           from '../hooks/useReelPrefetch';
 import { onFeedRefresh }         from '../services/feedEvents';
 
 const { height } = Dimensions.get('window');
@@ -89,6 +90,14 @@ export default function HomeScreen() {
   const [externalPage, setExternalPage]       = useState(1);
   const [externalHasMore, setExternalHasMore] = useState(true);
   const [loadingMore, setLoadingMore]         = useState(false);
+
+  // Following-tab pagination (independent from the trending/external pager).
+  const [followingPage, setFollowingPage]       = useState(1);
+  const [followingHasMore, setFollowingHasMore] = useState(true);
+
+  // Smart preload: warm the next 1-2 videos (files) + upcoming thumbnails so
+  // playback starts instantly on swipe. No-op on empty feed.
+  useReelPrefetch(feed, activeIndex);
   const [externalError, setExternalError]     = useState(null);  // banner copy when external-feed fetch fails
 
   const flatListRef = useRef(null);
@@ -143,29 +152,68 @@ export default function HomeScreen() {
     setLoadingMore(false);
   }, [loadingMore, externalHasMore, externalPage, activeTab]);
 
+  // ── Load FOLLOWING feed: videos from creators the user follows ──────────
+  // Real backend feed (GET /videos/following) — newest first, followed users
+  // only, reflects follow/unfollow immediately. Page 1 (reset).
+  const loadFollowing = useCallback(async () => {
+    const res = await videoService.getFollowingFeed(1, 8);
+    if (res.success) {
+      setFeed((res.videos || []).map(tagOwn));           // all TrueVision uploads
+      setFollowingPage(1);
+      setFollowingHasMore(1 < (res.pagination?.pages || 1));
+    } else {
+      setFeed([]);
+      setFollowingHasMore(false);
+    }
+    setActiveIndex(0);
+  }, []);
+
+  // Following infinite scroll — append the next page, de-duped.
+  const loadMoreFollowing = useCallback(async () => {
+    if (loadingMore || !followingHasMore || activeTab !== 'following') return;
+    setLoadingMore(true);
+    const next = followingPage + 1;
+    const res = await videoService.getFollowingFeed(next, 8);
+    if (res.success) {
+      const more = (res.videos || []).map(tagOwn);
+      setFeed((prev) => {
+        const seen = new Set(prev.map((p) => p.id || p._id));
+        return [...prev, ...more.filter((m) => !seen.has(m.id || m._id))];
+      });
+      setFollowingPage(next);
+      setFollowingHasMore(next < (res.pagination?.pages || 1));
+    } else {
+      setFollowingHasMore(false);
+    }
+    setLoadingMore(false);
+  }, [loadingMore, followingHasMore, followingPage, activeTab]);
+
   // ── Tab change ──────────────────────────────────────────────────────────
   useEffect(() => {
     setActiveIndex(0);
     setFeed([]);
     flatListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
 
+    setLoading(true);
     if (activeTab === 'trending') {
-      setLoading(true);
       loadTrending().finally(() => setLoading(false));
     } else {
-      // Following — no follow infrastructure yet, render empty state directly.
-      setLoading(false);
+      setFollowingPage(1);
+      setFollowingHasMore(true);
+      loadFollowing().finally(() => setLoading(false));
     }
-  }, [activeTab, loadTrending]);
+  }, [activeTab, loadTrending, loadFollowing]);
 
-  // Refresh when screen regains focus (only for trending; following is static)
+  // Refresh when the screen regains focus so returning to the app shows fresh
+  // content (spec: "Refresh automatically when returning to the app"). Reloads
+  // whichever tab is active when its feed is empty.
   useFocusEffect(
     useCallback(() => {
-      if (activeTab === 'trending' && feed.length === 0 && !loading) {
-        setLoading(true);
-        loadTrending().finally(() => setLoading(false));
-      }
-    }, [activeTab, feed.length, loading, loadTrending]),
+      if (feed.length !== 0 || loading) return;
+      setLoading(true);
+      const load = activeTab === 'trending' ? loadTrending : loadFollowing;
+      load().finally(() => setLoading(false));
+    }, [activeTab, feed.length, loading, loadTrending, loadFollowing]),
   );
 
   // Auto-refresh when the user changes a recommendation setting elsewhere.
@@ -182,11 +230,17 @@ export default function HomeScreen() {
   }, [activeTab, loadTrending]);
 
   const onRefresh = useCallback(async () => {
-    if (activeTab !== 'trending') return;
     setRefreshing(true);
-    await loadTrending();
+    if (activeTab === 'trending') await loadTrending();
+    else                         await loadFollowing();
     setRefreshing(false);
-  }, [activeTab, loadTrending]);
+  }, [activeTab, loadTrending, loadFollowing]);
+
+  // Route infinite-scroll to the active tab's pager.
+  const handleEndReached = useCallback(() => {
+    if (activeTab === 'trending') loadMoreExternal();
+    else                         loadMoreFollowing();
+  }, [activeTab, loadMoreExternal, loadMoreFollowing]);
 
   // ── Viewability ─────────────────────────────────────────────────────────
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
@@ -229,13 +283,13 @@ export default function HomeScreen() {
     <View style={S.root}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-      {activeTab === 'following' ? (
-        <FollowingEmpty insetTop={insets.top + 60} />
-      ) : loading && feed.length === 0 ? (
+      {loading && feed.length === 0 ? (
         <View style={S.loadingFull}>
           <ActivityIndicator size="large" color="#fff" />
           <Text style={S.loadingText}>Loading feed…</Text>
         </View>
+      ) : activeTab === 'following' && feed.length === 0 ? (
+        <FollowingEmpty insetTop={insets.top + 60} />
       ) : (
         <FlatList
           ref={flatListRef}
@@ -251,13 +305,15 @@ export default function HomeScreen() {
           viewabilityConfig={viewConfig}
           getItemLayout={(_, i) => ({ length: height, offset: height * i, index: i })}
           scrollEnabled={!showComments}
-          onEndReached={loadMoreExternal}
+          onEndReached={handleEndReached}
           onEndReachedThreshold={1.2}
           refreshing={refreshing}
           onRefresh={onRefresh}
           windowSize={3}
           maxToRenderPerBatch={2}
           initialNumToRender={1}
+          updateCellsBatchingPeriod={50}
+          disableIntervalMomentum
           removeClippedSubviews={Platform.OS === 'android'}
           ListFooterComponent={
             loadingMore ? <View style={{ padding: 30, alignItems: 'center' }}><ActivityIndicator color="#fff" /></View> : null

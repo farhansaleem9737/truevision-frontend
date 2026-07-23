@@ -24,12 +24,13 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StatusBar,
   ScrollView, Switch, ActivityIndicator,
-  KeyboardAvoidingView, Platform, StyleSheet, Alert,
+  KeyboardAvoidingView, Platform, StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import videoService from '../services/VideoService';
 import { useTheme } from '../context/ThemeContext';
+import { useConfirm } from '../components/common/ConfirmProvider';
 
 const CATEGORIES = [
   'education', 'tech', 'programming', 'business', 'finance',
@@ -58,6 +59,7 @@ export default function EditReelScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const { isDark } = useTheme();
   const palette = isDark ? DARK : LIGHT;
+  const confirm = useConfirm();
 
   // The caller MUST pass the current video document — we never fetch it
   // here to avoid a flash of empty fields. If for some reason it is
@@ -135,17 +137,18 @@ export default function EditReelScreen({ route, navigation }) {
     }
   }, [canSave, initial, payload, navigation, route]);
 
-  const confirmBack = useCallback(() => {
+  const confirmBack = useCallback(async () => {
     if (!dirty) return navigation.goBack();
-    Alert.alert(
-      'Discard changes?',
-      'You have unsaved edits.',
-      [
-        { text: 'Keep editing', style: 'cancel' },
-        { text: 'Discard', style: 'destructive', onPress: () => navigation.goBack() },
-      ],
-    );
-  }, [dirty, navigation]);
+    const ok = await confirm({
+      title:       'Discard changes?',
+      message:     'You have unsaved edits.',
+      confirmText: 'Discard',
+      cancelText:  'Keep editing',
+      destructive: true,
+      icon:        'create-outline',
+    });
+    if (ok) navigation.goBack();
+  }, [dirty, navigation, confirm]);
 
   if (!initial) return null;
 

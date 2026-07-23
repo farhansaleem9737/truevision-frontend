@@ -7,7 +7,7 @@
 // 'system_share'); older rows only have `platform` — both shapes are handled.
 
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image as ExpoImage } from 'expo-image';
@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../../components/settings/ScreenHeader';
 import VideoTileGrid from '../../components/activity/VideoTileGrid';
 import { useTheme } from '../../context/ThemeContext';
+import { useConfirm } from '../../components/common/ConfirmProvider';
 import activityService from '../../services/ActivityService';
 
 // Compact relative timestamp for the per-tile share-date pill.
@@ -39,6 +40,7 @@ const methodLabel = (m) => {
 export default function SharedVideosScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const confirm = useConfirm();
 
   const [items, setItems]         = useState([]);
   const [page, setPage]           = useState(1);
@@ -87,22 +89,18 @@ export default function SharedVideosScreen({ navigation }) {
     load(page + 1);
   };
 
-  const clearAll = () => {
+  const clearAll = async () => {
     if (items.length === 0) return;
-    Alert.alert(
-      'Clear shared videos',
-      "This removes every entry from your share history. This can't be undone.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear all', style: 'destructive',
-          onPress: async () => {
-            await activityService.clearShares();
-            setItems([]); setPage(1); setHasMore(false);
-          },
-        },
-      ],
-    );
+    const ok = await confirm({
+      title:       'Clear shared videos',
+      message:     "This removes every entry from your share history. This can't be undone.",
+      confirmText: 'Clear all',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    await activityService.clearShares();
+    setItems([]); setPage(1); setHasMore(false);
   };
 
   const removeOne = (shareId) => {

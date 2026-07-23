@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../components/settings/ScreenHeader';
+import PressableScale from '../components/common/PressableScale';
 import securityService from '../services/SecurityService';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -156,10 +157,9 @@ export default function ChangePasswordScreen({ navigation }) {
             )}
           </View>
 
-          <TouchableOpacity
+          <PressableScale
             onPress={onSubmit}
             disabled={!canSave}
-            activeOpacity={0.85}
             style={[S.submit, { backgroundColor: colors.accent, opacity: canSave ? 1 : 0.45 }]}
           >
             {saving ? (
@@ -167,7 +167,7 @@ export default function ChangePasswordScreen({ navigation }) {
             ) : (
               <Text style={S.submitText}>Update Password</Text>
             )}
-          </TouchableOpacity>
+          </PressableScale>
 
           <Text style={[S.note, { color: colors.textMuted }]}>
             Changing your password signs you out of every device, including this one.

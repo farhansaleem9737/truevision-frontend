@@ -21,6 +21,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../components/settings/ScreenHeader';
 import { useTheme } from '../context/ThemeContext';
+import { useProfileNavigation } from '../utils/profileNavigation';
 import userService from '../services/UserService';
 
 const ini = (n) => (n || '?').split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
@@ -108,13 +109,9 @@ export default function FollowRequestsScreen({ navigation }) {
     }
   };
 
-  const openProfile = (id) => {
-    if (typeof navigation.push === 'function') {
-      navigation.push('UserProfile', { userId: id });
-    } else {
-      navigation.navigate('UserProfile', { userId: id });
-    }
-  };
+  // Ownership-aware + push semantics (own id → My Profile).
+  const goToProfile = useProfileNavigation();
+  const openProfile = (id) => goToProfile(id, { push: true });
 
   const renderItem = ({ item }) => {
     const u = item.user;

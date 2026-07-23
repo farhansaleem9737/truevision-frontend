@@ -1,5 +1,5 @@
 import React, {
-  useState, useRef, useEffect, useCallback,
+  useState, useRef, useEffect, useCallback, useMemo,
 } from 'react';
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback,
@@ -14,13 +14,17 @@ import { LinearGradient }            from 'expo-linear-gradient';
 import { Ionicons }                  from '@expo/vector-icons';
 import Slider                        from '@react-native-community/slider';
 import { useSafeAreaInsets }         from 'react-native-safe-area-context';
-import { useIsFocused, useNavigation } from '@react-navigation/native';
+import { useIsFocused } from '@react-navigation/native';
 import videoService                  from '../services/VideoService';
+import videoCache                    from '../services/videoCache';
 import userService                   from '../services/UserService';
 import { useAuth }                   from '../context/AuthContext';
+import { useProfileNavigation }      from '../utils/profileNavigation';
+import useAppActive                  from '../hooks/useAppActive';
 import CommentsSheet                 from '../components/comments/CommentsSheet';
 import InfoButton                    from '../components/video/InfoButton';
 import VideoInfoPanel                from '../components/video/VideoInfoPanel';
+import { useConfirm }                from '../components/common/ConfirmProvider';
 
 const { width, height } = Dimensions.get('window');
 
@@ -28,58 +32,10 @@ const { width, height } = Dimensions.get('window');
 const TAB_BAR_BASE = 65;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FEED DATA
+// FEED DATA — always real. The old buildFeed() sample-video fallback
+// (BigBuckBunny + fabricated creators/counts) was removed: a deep-linked
+// video now falls back to [mapApiVideo(video)] with its true fields only.
 // ─────────────────────────────────────────────────────────────────────────────
-const buildFeed = (v) => {
-  const seed = {
-    id:          v?.id          || 'f1',
-    uri:         v?.video_files?.[0]?.link ||
-                 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    user:        v?.user        || { name:'Nicholaus Choi', avatar:'https://i.pravatar.cc/150?img=1' },
-    title:       v?.title       || 'Big Buck Bunny',
-    description: v?.description || 'The classic open-source animation 🐰✨ #animation #cute',
-    song:        v?.song        || 'Original Sound – bunny_studios',
-    duration:    v?.duration    || 53,
-    likes:       v?.likes       || 142600,
-    comments:    v?.comments    || 3200,
-    reposts:     v?.reposts     || 890,
-    shares:      v?.shares      || 8900,
-    saves:       v?.saves       || 5082,
-    views:       v?.views       || 560000,
-    isFollowing: v?.isFollowing || false,
-  };
-  return [
-    seed,
-    { id:'f2',
-      uri:'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-      user:{ name:'dreamer_films', avatar:'https://i.pravatar.cc/150?img=2' },
-      title:"Elephant's Dream",
-      description:'A surreal open-source animation journey 🐘💭 #blender #art',
-      song:'Elephants Dream OST',
-      duration:658, likes:98200, comments:1540, reposts:320, shares:4300, saves:2100, views:312000, isFollowing:true },
-    { id:'f3',
-      uri:'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-      user:{ name:'blazevfx', avatar:'https://i.pravatar.cc/150?img=3' },
-      title:'For Bigger Blazes',
-      description:'Turn up the heat 🔥🔥🔥 #vfx #fire #epicshots',
-      song:'Heat Wave – blazevfx',
-      duration:15, likes:512000, comments:8720, reposts:2100, shares:31200, saves:5069, views:1200000, isFollowing:false },
-    { id:'f4',
-      uri:'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-      user:{ name:'adventureseeker', avatar:'https://i.pravatar.cc/150?img=4' },
-      title:'For Bigger Escapes',
-      description:'Escape the ordinary 🌄 #travel #adventure #explore',
-      song:'Run Wild – adventureseeker',
-      duration:15, likes:234000, comments:5620, reposts:980, shares:12400, saves:3400, views:890000, isFollowing:false },
-    { id:'f5',
-      uri:'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4',
-      user:{ name:'subarunation', avatar:'https://i.pravatar.cc/150?img=5' },
-      title:'Street & Dirt',
-      description:'We own every road 🚗💨 #subaru #offroad #carsoftiktok',
-      song:'Drive It Like You Stole It',
-      duration:60, likes:389000, comments:7890, reposts:1540, shares:22100, saves:4200, views:780000, isFollowing:true },
-  ];
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MAP BACKEND VIDEO → VideoItem format
@@ -233,22 +189,45 @@ const SongTicker = ({ song }) => {
 // SINGLE VIDEO ITEM
 // ─────────────────────────────────────────────────────────────────────────────
 const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset, onMore }) => {
-  const navigation = useNavigation();
   const { user: authUser } = useAuth();
+  const openProfile = useProfileNavigation();
+  const appActive = useAppActive();   // pause on background, resume on foreground
 
   // The signed-in user never sees a Follow button on their own videos.
   const isSelf = !!(authUser?._id && item.ownerId && String(item.ownerId) === String(authUser._id));
 
   // ── expo-video player ─────────────────────────────────────────────────────
-  const player = useVideoPlayer(item.uri, (p) => {
+  // Play from the local disk cache when this file was prefetched (instant start,
+  // survives backgrounding); otherwise stream. Resolved once per uri so a late
+  // cache completion never swaps the source out from under a playing video.
+  const source = useMemo(() => videoCache.cachedPath(item.uri) || item.uri, [item.uri]);
+  const player = useVideoPlayer(source, (p) => {
     p.loop  = true;
     p.muted = false;
+    // Smaller forward buffer = faster first frame; the player keeps fetching
+    // after playback starts. Matches the tuned feed cards (ReelCard).
+    if ('bufferOptions' in p) {
+      try {
+        p.bufferOptions = {
+          preferredForwardBufferDuration: 4,
+          minBufferForPlayback: 1,
+          waitsToMinimizeStalling: false,
+        };
+      } catch {}
+    }
   });
   const { isPlaying: playerPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration,    setDuration]    = useState(0);
   const [isReady,     setIsReady]     = useState(false);
+
+  // View counting — one real view per session once ≥ 2.5 s or ≥ 50 % is
+  // watched. Refs keep it out of the render path; backend dedupes per user.
+  const viewedRef   = useRef(false);
+  const isActiveRef = useRef(isActive);
+  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
+  useEffect(() => { viewedRef.current = false; }, [item.videoId]);
 
   useEffect(() => {
     const s1 = player.addListener('statusChange', ({ status }) => {
@@ -257,16 +236,26 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
         setDuration(player.duration ?? 0);
       }
     });
-    const s2 = player.addListener('timeUpdate', ({ currentTime:t }) => setCurrentTime(t ?? 0));
+    const s2 = player.addListener('timeUpdate', ({ currentTime:t }) => {
+      const cur = t ?? 0;
+      setCurrentTime(cur);
+      if (!viewedRef.current && isActiveRef.current && item.videoId) {
+        const dur = player.duration ?? 0;
+        if (cur >= 2.5 || (dur > 0 && cur / dur >= 0.5)) {
+          viewedRef.current = true;
+          videoService.recordView(item.videoId, Math.round(cur * 1000)).catch(() => {});
+        }
+      }
+    });
     return () => { s1.remove(); s2.remove(); };
-  }, [player]);
+  }, [player, item.videoId]);
 
-  // ── Playback control — pause when screen unfocused (no background play) ──
+  // ── Playback control — pause when screen unfocused OR app backgrounded ──
   const [userPaused, setUserPaused]   = useState(false);
   useEffect(() => {
-    if (isActive && isFocused && !userPaused) player.play();
+    if (isActive && isFocused && appActive && !userPaused) player.play();
     else player.pause();
-  }, [isActive, isFocused, userPaused, player]);
+  }, [isActive, isFocused, appActive, userPaused, player]);
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [isLiked,     setIsLiked]     = useState(item.isLiked ?? false);
@@ -298,8 +287,13 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
     const now = Date.now();
     const { locationX, locationY } = evt.nativeEvent;
     if (now - lastTap.current < 280) {
-      // Double tap
-      if (!isLiked) { setIsLiked(true); setLikes(l => l + 1); bounce(likeAnim); }
+      // Double tap — persist the like like the button does (it used to be
+      // cosmetic-only: local state flipped but the API was never called, so
+      // the like vanished on reload).
+      if (!isLiked) {
+        setIsLiked(true); setLikes(l => l + 1); bounce(likeAnim);
+        if (item.videoId) videoService.toggleLike(item.videoId).catch(() => {});
+      }
       setBurst({ visible:false, x:locationX, y:locationY });
       setTimeout(() => setBurst({ visible:true, x:locationX, y:locationY }), 10);
     } else {
@@ -311,7 +305,7 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
       });
     }
     lastTap.current = now;
-  }, [isLiked]);
+  }, [isLiked, item.videoId, likeAnim, pauseAnim]);
 
   const handleLike = async () => {
     const wasLiked = isLiked;
@@ -557,7 +551,7 @@ const VideoItem = ({ item, isActive, isFocused = true, onOpenComments, tabOffset
         {/* Creator row: avatar • @name • [Follow] */}
         <View style={S.creatorRow}>
           <TouchableOpacity
-            onPress={() => { if (item.ownerId) navigation.navigate('UserProfile', { userId: String(item.ownerId) }); }}
+            onPress={() => { if (item.ownerId) openProfile(item.ownerId); }}
             activeOpacity={0.8}
             style={{ flexDirection:'row', alignItems:'center', flexShrink:1 }}
           >
@@ -634,6 +628,7 @@ export default function VideoPlayerScreen({ navigation, route }) {
   const insets     = useSafeAreaInsets();
   const isFocused  = useIsFocused();
   const { user: authUser } = useAuth();
+  const confirm    = useConfirm();
   const flatListRef = useRef(null);
 
   // Tracks whether the screen is still mounted — guards async setState calls.
@@ -648,10 +643,17 @@ export default function VideoPlayerScreen({ navigation, route }) {
       : null
   ).current;
 
-  const safeInitialIndex = Math.min(
-    Math.max(0, initialIndex),
-    Math.max(0, (preloadedFeed?.length || 1) - 1),
-  );
+  // The caller's initialIndex points into the RAW list; filtering out items
+  // without a playable uri shifts positions. Re-locate the actually-tapped
+  // item by id in the filtered list so the player never opens the wrong video.
+  const safeInitialIndex = useRef((() => {
+    if (!preloadedFeed) return Math.max(0, initialIndex);
+    const rawClamped = Math.min(Math.max(0, initialIndex), Math.max(0, (preloadedRaw?.length || 1) - 1));
+    const tappedId = preloadedRaw?.[rawClamped]?._id || preloadedRaw?.[rawClamped]?.id;
+    const located = tappedId ? preloadedFeed.findIndex((v) => String(v.id) === String(tappedId)) : -1;
+    const idx = located >= 0 ? located : rawClamped;
+    return Math.min(Math.max(0, idx), Math.max(0, preloadedFeed.length - 1));
+  })()).current;
 
   console.log('[VideoPlayer] mounted', {
     preloaded:    preloadedFeed?.length || 0,
@@ -686,10 +688,11 @@ export default function VideoPlayerScreen({ navigation, route }) {
         setHasMore(pageNum < (res.pagination?.pages ?? 1));
         setPage(pageNum);
       } else if (reset) {
-        // No real videos came back — fall back to sample content if a deep-linked
-        // video was passed, otherwise show empty state.
+        // No real videos came back. If a deep-linked video was passed, play
+        // exactly THAT video (real fields via mapApiVideo) — never fabricated
+        // sample reels with invented creators and counts.
         if (initialVideo) {
-          setFeed(buildFeed(initialVideo));
+          setFeed([mapApiVideo(initialVideo)].filter((v) => !!v.uri));
         } else {
           setFeed([]);
         }
@@ -702,7 +705,7 @@ export default function VideoPlayerScreen({ navigation, route }) {
       console.log('[VideoPlayer] loadFeed error:', e?.message);
       if (reset) {
         setError(e?.message || 'Could not load videos');
-        if (initialVideo) setFeed(buildFeed(initialVideo));
+        if (initialVideo) setFeed([mapApiVideo(initialVideo)].filter((v) => !!v.uri));
         setHasMore(false);
       }
     } finally {
@@ -761,6 +764,21 @@ export default function VideoPlayerScreen({ navigation, route }) {
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 55 }).current;
 
+  // Aggressively warm the next 2 videos (and pause prefetch for ones scrolled
+  // past) so swiping in the fullscreen viewer starts instantly — same strategy
+  // as the home feed, applied to this screen's simple {uri} items.
+  useEffect(() => {
+    if (!feed.length) return;
+    const next = [];
+    for (let i = activeIndex + 1; i <= activeIndex + 2 && i < feed.length; i++) {
+      if (feed[i]?.uri) next.push(feed[i].uri);
+    }
+    const keep = [...next];
+    if (feed[activeIndex]?.uri) keep.push(feed[activeIndex].uri);
+    videoCache.keepOnly(keep);
+    if (next.length) videoCache.prefetchMany(next);
+  }, [feed, activeIndex]);
+
   // VideoPlayer is rendered above the bottom-tab navigator (no tab bar shows
   // beneath it), so layouts only need the safe-area inset. Adding TAB_BAR_BASE
   // here was leaving ~65px of empty black space below the action column.
@@ -787,43 +805,53 @@ export default function VideoPlayerScreen({ navigation, route }) {
       {
         text: 'Delete video',
         style: 'destructive',
-        onPress: () => {
-          Alert.alert(
-            'Delete video',
-            'This will permanently remove the video. This cannot be undone.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Delete', style: 'destructive',
-                onPress: async () => {
-                  let removed = null;
-                  let removedAt = -1;
-                  setFeed((prev) => {
-                    removedAt = prev.findIndex((v) => v.id === item.id);
-                    removed   = removedAt >= 0 ? prev[removedAt] : null;
-                    return prev.filter((v) => v.id !== item.id);
-                  });
-                  const res = await videoService.deleteVideo(item.videoId);
-                  if (!isMounted.current) return;
-                  if (!res.success && removed) {
-                    setFeed((prev) => {
-                      const next = [...prev];
-                      next.splice(Math.max(0, removedAt), 0, removed);
-                      return next;
-                    });
-                    Alert.alert('Delete failed', res.message || 'Try again later.');
-                  }
-                },
-              },
-            ],
-          );
+        onPress: async () => {
+          const ok = await confirm({
+            title:       'Delete video',
+            message:     'This will permanently remove the video. This cannot be undone.',
+            confirmText: 'Delete',
+            destructive: true,
+            icon:        'trash-outline',
+          });
+          if (!ok) return;
+          let removed = null;
+          let removedAt = -1;
+          setFeed((prev) => {
+            removedAt = prev.findIndex((v) => v.id === item.id);
+            removed   = removedAt >= 0 ? prev[removedAt] : null;
+            return prev.filter((v) => v.id !== item.id);
+          });
+          const res = await videoService.deleteVideo(item.videoId);
+          if (!isMounted.current) return;
+          if (!res.success && removed) {
+            setFeed((prev) => {
+              const next = [...prev];
+              next.splice(Math.max(0, removedAt), 0, removed);
+              return next;
+            });
+            Alert.alert('Delete failed', res.message || 'Try again later.');
+          }
         },
       },
       { text: 'Cancel', style: 'cancel' },
     ];
 
     const guestOptions = [
-      { text: 'Report', style: 'destructive', onPress: () => Alert.alert('Reported', 'Thanks — we\'ll review this content.') },
+      { text: 'Report', style: 'destructive', onPress: async () => {
+        const ok = await confirm({
+          title:       'Report this video?',
+          message:     "We'll review this content. Thanks for helping keep TrueVision safe.",
+          confirmText: 'Report',
+          destructive: true,
+          icon:        'flag-outline',
+        });
+        // Actually file the report — the confirm result used to be discarded,
+        // so no report ever reached moderation.
+        if (ok && item.videoId) {
+          const res = await videoService.reportVideo(item.videoId, 'inappropriate');
+          if (!res?.success) Alert.alert('Report failed', res?.message || 'Please try again.');
+        }
+      } },
       { text: 'Share', onPress: async () => { try { await Share.share({ message: `Check out "${item.title || ''}"`, url: item.uri || '' }); if (item.videoId) videoService.shareVideo(item.videoId); } catch {} } },
       { text: 'Cancel', style: 'cancel' },
     ];
@@ -833,7 +861,7 @@ export default function VideoPlayerScreen({ navigation, route }) {
       undefined,
       isOwner ? ownerOptions : guestOptions,
     );
-  }, [authUser?._id, navigation]);
+  }, [authUser?._id, navigation, confirm]);
 
   // Stable referential identity for renderItem so VideoItem doesn't re-mount each render.
   const renderItem = useCallback(({ item, index }) => (
@@ -906,12 +934,23 @@ export default function VideoPlayerScreen({ navigation, route }) {
   }
 
   if (!feed.length) {
+    // Recoverable empty state — a real Retry button + back exit (the old copy
+    // said "Pull down to refresh" on a static View where pulling did nothing).
     return (
       <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
         <Ionicons name="videocam-off-outline" size={48} color="rgba(255,255,255,0.4)" />
         <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 14 }}>No videos available</Text>
-        <Text style={{ color: '#94a3b8', fontSize: 13, marginTop: 6 }}>Pull down to refresh</Text>
+        <TouchableOpacity
+          onPress={() => loadFeed(1, true)}
+          activeOpacity={0.85}
+          style={{ marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 22, backgroundColor: '#3b82f6' }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '800' }}>Retry</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.goBack()} activeOpacity={0.7} style={{ marginTop: 14 }}>
+          <Text style={{ color: '#94a3b8', fontSize: 13, fontWeight: '600' }}>Go back</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -946,6 +985,9 @@ export default function VideoPlayerScreen({ navigation, route }) {
         scrollEnabled={!showComments}
         windowSize={3}
         maxToRenderPerBatch={2}
+        updateCellsBatchingPeriod={50}
+        removeClippedSubviews={Platform.OS === 'android'}
+        disableIntervalMomentum
         onEndReached={loadMore}
         onEndReachedThreshold={0.4}
         ListFooterComponent={

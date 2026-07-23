@@ -1,9 +1,12 @@
 // truevision/components/discover/HashtagResultRow.js
 //
-// Search result row for a hashtag. # icon, tag, video count.
+// Search-result row for a hashtag. Purple # chip, tag, video count.
+// Theme-aware via useSearchTheme (light/dark).
 
+import { memo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSearchTheme } from './searchTheme';
 
 const fmtCount = (n) => {
   if (!n) return '0';
@@ -12,32 +15,36 @@ const fmtCount = (n) => {
   return String(n);
 };
 
-export default function HashtagResultRow({ tag, videosCount, onPress }) {
+function HashtagResultRow({ tag, videosCount, onPress }) {
+  const c = useSearchTheme();
   return (
     <TouchableOpacity onPress={() => onPress?.(tag)} activeOpacity={0.6} style={S.row}>
-      <View style={S.iconWrap}>
-        <Ionicons name="pricetag" size={20} color="#0f172a" />
+      <View style={[S.iconWrap, { backgroundColor: c.accentSoft }]}>
+        <Ionicons name="pricetag" size={19} color={c.accent} />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={S.tag} numberOfLines={1}>#{tag}</Text>
-        <Text style={S.count}>{fmtCount(videosCount)} {videosCount === 1 ? 'video' : 'videos'}</Text>
+        <Text style={[S.tag, { color: c.text }]} numberOfLines={1}>#{tag}</Text>
+        <Text style={[S.count, { color: c.textMuted }]}>
+          {fmtCount(videosCount)} {videosCount === 1 ? 'video' : 'videos'}
+        </Text>
       </View>
-      <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
+      <Ionicons name="chevron-forward" size={18} color={c.textDim} />
     </TouchableOpacity>
   );
 }
 
+export default memo(HashtagResultRow);
+
 const S = StyleSheet.create({
   row: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 12, paddingHorizontal: 16,
+    paddingVertical: 11, paddingHorizontal: 16,
   },
   iconWrap: {
-    width: 48, height: 48, borderRadius: 24,
-    backgroundColor: '#f1f5f9',
+    width: 48, height: 48, borderRadius: 14,
     alignItems: 'center', justifyContent: 'center',
     marginRight: 12,
   },
-  tag:    { fontSize: 15, fontWeight: '800', color: '#0f172a' },
-  count:  { fontSize: 12.5, color: '#64748b', marginTop: 2 },
+  tag:   { fontSize: 15, fontWeight: '800' },
+  count: { fontSize: 12.5, marginTop: 2, fontWeight: '500' },
 });

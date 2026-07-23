@@ -91,7 +91,10 @@ export default function SplashScreen({ navigation }) {
   useEffect(() => {
     if (loading || !navigation) return;
     const timer = setTimeout(() => {
-      navigation.replace(isAuthenticated ? 'Home' : 'Login');
+      // Always route to Login: 'Home' does not exist in this AuthStack — the
+      // root navigator swaps to the app stack on its own when auth flips, so
+      // the authenticated branch here was an unhandled navigation action.
+      navigation.replace('Login');
     }, 2200);
     return () => clearTimeout(timer);
   }, [loading, isAuthenticated, navigation]);

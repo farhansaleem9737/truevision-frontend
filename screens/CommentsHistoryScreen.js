@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../components/settings/ScreenHeader';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { useConfirm } from '../components/common/ConfirmProvider';
 import activityService from '../services/ActivityService';
 import commentsService from '../services/CommentsService';
 
@@ -158,6 +159,7 @@ export default function CommentsHistoryScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  const confirm = useConfirm();
 
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
@@ -235,28 +237,24 @@ export default function CommentsHistoryScreen({ navigation }) {
     }
   };
 
-  const confirmDelete = (item) => {
-    Alert.alert(
-      'Delete this comment?',
-      "This action can't be undone.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            const snapshot = items;
-            setItems((prev) => prev.filter((c) => c._id !== item._id));
-            try {
-              // Same call CommentsSheet makes: commentsService.remove(commentId, videoId)
-              await commentsService.remove(item._id, videoIdOf(item));
-            } catch (e) {
-              setItems(snapshot);
-              Alert.alert('Could not delete', e?.message || 'Try again');
-            }
-          },
-        },
-      ],
-    );
+  const confirmDelete = async (item) => {
+    const ok = await confirm({
+      title:       'Delete this comment?',
+      message:     "This action can't be undone.",
+      confirmText: 'Delete',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    const snapshot = items;
+    setItems((prev) => prev.filter((c) => c._id !== item._id));
+    try {
+      // Same call CommentsSheet makes: commentsService.remove(commentId, videoId)
+      await commentsService.remove(item._id, videoIdOf(item));
+    } catch (e) {
+      setItems(snapshot);
+      Alert.alert('Could not delete', e?.message || 'Try again');
+    }
   };
 
   // ── Card ───────────────────────────────────────────────────────────────

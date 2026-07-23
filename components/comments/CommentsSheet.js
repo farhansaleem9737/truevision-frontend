@@ -24,7 +24,9 @@ import * as Haptics from 'expo-haptics';
 
 import commentsService from '../../services/CommentsService';
 import { useAuth } from '../../context/AuthContext';
+import { useProfileNavigation } from '../../utils/profileNavigation';
 import { useTheme } from '../../context/ThemeContext';
+import { useConfirm } from '../common/ConfirmProvider';
 
 const { height } = Dimensions.get('window');
 const MAX_LEN = 300;
@@ -176,8 +178,12 @@ const EditModal = ({ visible, initialText = '', onCancel, onSave, saving, colors
 };
 
 // ── Single comment row ──────────────────────────────────────────────────────
-const CommentRow = ({ item, isOwner, onLongPress, colors }) => {
+// Avatar + username open the commenter's profile via the shared ownership-aware
+// helper (own → My Profile, other → User Profile). The row body keeps the
+// long-press → Edit/Delete action sheet for the comment's owner.
+const CommentRow = ({ item, isOwner, onLongPress, onOpenProfile, colors }) => {
   const avatar = item.userAvatar || 'https://i.pravatar.cc/150?img=10';
+  const goProfile = () => { if (item.userId) onOpenProfile?.(item.userId); };
   return (
     <TouchableOpacity
       activeOpacity={0.85}
@@ -185,10 +191,18 @@ const CommentRow = ({ item, isOwner, onLongPress, colors }) => {
       delayLongPress={250}
       style={S.cRow}
     >
-      <Image source={{ uri: avatar }} style={[S.cAvatar, { backgroundColor: colors.divider }]} />
+      <TouchableOpacity activeOpacity={0.7} onPress={goProfile}>
+        <Image source={{ uri: avatar }} style={[S.cAvatar, { backgroundColor: colors.divider }]} />
+      </TouchableOpacity>
       <View style={{ flex: 1 }}>
         <View style={S.cHead}>
-          <Text style={[S.cUser, { color: colors.text }]}>{item.username}</Text>
+          <Text
+            onPress={goProfile}
+            suppressHighlighting
+            style={[S.cUser, { color: colors.text }]}
+          >
+            {item.username}
+          </Text>
           <Text style={[S.cTime, { color: colors.textDim }]}>  {fmtTime(item.createdAt)}</Text>
           {item.edited && (
             <Text style={[S.cEdited, { color: colors.textDim }]}>  · edited</Text>
@@ -225,6 +239,17 @@ export default function CommentsSheet({
   const insets   = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  const openProfile = useProfileNavigation();
+  const confirm = useConfirm();
+
+  // Tapping a commenter's avatar/username: close the sheet first, then route
+  // (own → My Profile, other → User Profile) so the user lands cleanly on the
+  // profile instead of behind the still-open modal.
+  const handleOpenProfile = useCallback((userId) => {
+    if (!userId) return;
+    onClose?.();
+    openProfile(userId);
+  }, [onClose, openProfile]);
 
   const slideY = useRef(new Animated.Value(height)).current;
   const [comments, setComments] = useState([]);
@@ -330,32 +355,25 @@ export default function CommentsSheet({
     }
   }, [editFor, user, videoId]);
 
-  const confirmDelete = useCallback(() => {
+  const confirmDelete = useCallback(async () => {
     if (!actionFor) return;
     const c = actionFor;
     setActionFor(null);
-    setTimeout(() => {
-      Alert.alert(
-        'Delete this comment?',
-        'This action can\'t be undone.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                await commentsService.remove(c.id, videoId);
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-              } catch (e) {
-                Alert.alert('Could not delete', e.message || 'Try again');
-              }
-            },
-          },
-        ],
-      );
-    }, 160);
-  }, [actionFor]);
+    const ok = await confirm({
+      title:       'Delete this comment?',
+      message:     "This action can't be undone.",
+      confirmText: 'Delete',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    try {
+      await commentsService.remove(c.id, videoId);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch (e) {
+      Alert.alert('Could not delete', e.message || 'Try again');
+    }
+  }, [actionFor, confirm, videoId]);
 
   // ── Derived ──────────────────────────────────────────────────────────────
   const trimmed   = text.trim();
@@ -412,6 +430,7 @@ export default function CommentsSheet({
                 item={item}
                 isOwner={!!user && item.userId === user._id}
                 onLongPress={() => handleLongPress(item)}
+                onOpenProfile={handleOpenProfile}
                 colors={colors}
               />
             )}

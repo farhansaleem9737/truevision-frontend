@@ -11,6 +11,7 @@ import * as ImagePicker   from 'expo-image-picker';
 import ScreenContainer    from '../components/ScreenContainer';
 import userService        from '../services/UserService';
 import { useAuth }        from '../context/AuthContext';
+import { useConfirm }     from '../components/common/ConfirmProvider';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INPUT ROW component
@@ -33,6 +34,7 @@ const Field = ({ label, icon, children, hint, error }) => (
 // ─────────────────────────────────────────────────────────────────────────────
 export default function EditProfileScreen({ navigation }) {
   const { user, updateUser } = useAuth();
+  const confirm = useConfirm();
 
   // ── Form state ──────────────────────────────────────────────────────────────
   const [fullName, setFullName] = useState(user?.fullName || '');
@@ -103,27 +105,27 @@ export default function EditProfileScreen({ navigation }) {
   }, []);
 
   // ── Remove profile photo ────────────────────────────────────────────────────
-  const confirmRemovePhoto = useCallback(() => {
+  const confirmRemovePhoto = useCallback(async () => {
     if (!user?.profileImage && !pickedAsset) return;
-    Alert.alert('Remove Photo', 'Are you sure you want to remove your profile picture?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove', style: 'destructive',
-        onPress: async () => {
-          setSaving(true);
-          const res = await userService.removeProfileImage();
-          setSaving(false);
-          if (res.success) {
-            setPreviewUri(null);
-            setPickedAsset(null);
-            await updateUser(res.user);
-          } else {
-            Alert.alert('Error', res.message || 'Could not remove photo');
-          }
-        },
-      },
-    ]);
-  }, [user, pickedAsset, updateUser]);
+    const ok = await confirm({
+      title:       'Remove Photo',
+      message:     'Are you sure you want to remove your profile picture?',
+      confirmText: 'Remove',
+      destructive: true,
+      icon:        'person-circle-outline',
+    });
+    if (!ok) return;
+    setSaving(true);
+    const res = await userService.removeProfileImage();
+    setSaving(false);
+    if (res.success) {
+      setPreviewUri(null);
+      setPickedAsset(null);
+      await updateUser(res.user);
+    } else {
+      Alert.alert('Error', res.message || 'Could not remove photo');
+    }
+  }, [user, pickedAsset, updateUser, confirm]);
 
   // ── Validate form ────────────────────────────────────────────────────────────
   const validate = () => {

@@ -20,6 +20,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../components/settings/ScreenHeader';
 import { useTheme } from '../context/ThemeContext';
+import { useProfileNavigation } from '../utils/profileNavigation';
 import userService from '../services/UserService';
 
 const PRIVACY_CODES = ['FOLLOWERS_PRIVATE', 'ACCOUNT_PRIVATE'];
@@ -88,13 +89,10 @@ export default function FollowListScreen({ route, navigation }) {
     load(page + 1);
   };
 
-  const openProfile = (id) => {
-    if (typeof navigation.push === 'function') {
-      navigation.push('UserProfile', { userId: id });
-    } else {
-      navigation.navigate('UserProfile', { userId: id });
-    }
-  };
+  // Ownership-aware + push semantics so profile → its follow list → profile →
+  // … stays a real drill-down back-stack (own id routes to My Profile).
+  const goToProfile = useProfileNavigation();
+  const openProfile = (id) => goToProfile(id, { push: true });
 
   const renderItem = ({ item }) => (
     <TouchableOpacity

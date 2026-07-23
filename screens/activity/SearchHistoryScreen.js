@@ -8,7 +8,7 @@
 
 import { useCallback, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, RefreshControl,
+  ActivityIndicator, FlatList, RefreshControl,
   StatusBar, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +16,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../../components/settings/ScreenHeader';
 import { useTheme } from '../../context/ThemeContext';
+import { useConfirm } from '../../components/common/ConfirmProvider';
 import activityService from '../../services/ActivityService';
 
 const timeAgo = (date) => {
@@ -31,6 +32,7 @@ const timeAgo = (date) => {
 export default function SearchHistoryScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const confirm = useConfirm();
 
   const [items, setItems]         = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -47,22 +49,18 @@ export default function SearchHistoryScreen({ navigation }) {
 
   const onRefresh = () => { setRefreshing(true); load(); };
 
-  const clearAll = () => {
+  const clearAll = async () => {
     if (items.length === 0) return;
-    Alert.alert(
-      'Clear search history',
-      "This deletes every search you've made. This can't be undone.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear all', style: 'destructive',
-          onPress: async () => {
-            await activityService.clearSearches();
-            setItems([]);
-          },
-        },
-      ],
-    );
+    const ok = await confirm({
+      title:       'Clear search history',
+      message:     "This deletes every search you've made. This can't be undone.",
+      confirmText: 'Clear all',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    await activityService.clearSearches();
+    setItems([]);
   };
 
   const removeOne = (id) => {

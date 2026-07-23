@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import ScreenHeader from '../components/settings/ScreenHeader';
 import { Section, SettingsRow } from '../components/settings/SettingsRow';
+import { useConfirm } from '../components/common/ConfirmProvider';
 import { useTheme } from '../context/ThemeContext';
 import activityService from '../services/ActivityService';
 
@@ -17,27 +18,24 @@ export default function ActivityScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { t } = useTranslation();
+  const confirm = useConfirm();
 
-  const clearAll = () => {
-    Alert.alert(
-      t('activity.clearAllTitle'),
-      t('activity.clearAllBody'),
-      [
-        { text: t('common.cancel'), style: 'cancel' },
-        {
-          text: t('activity.clearAll'),
-          style: 'destructive',
-          onPress: async () => {
-            const res = await activityService.clearAll();
-            if (res?.success) {
-              Alert.alert(t('activity.clearedTitle'), t('activity.cleared'));
-            } else {
-              Alert.alert(t('activity.clearFailed'), res?.message || t('common.tryAgainLater'));
-            }
-          },
-        },
-      ],
-    );
+  const clearAll = async () => {
+    const ok = await confirm({
+      title:       t('activity.clearAllTitle'),
+      message:     t('activity.clearAllBody'),
+      confirmText: t('activity.clearAll'),
+      cancelText:  t('common.cancel'),
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    const res = await activityService.clearAll();
+    if (res?.success) {
+      Alert.alert(t('activity.clearedTitle'), t('activity.cleared'));
+    } else {
+      Alert.alert(t('activity.clearFailed'), res?.message || t('common.tryAgainLater'));
+    }
   };
 
   return (

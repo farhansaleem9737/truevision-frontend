@@ -20,6 +20,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import videoService from '../services/VideoService';
+import FadeInView from '../components/common/FadeInView';
+import PressableScale from '../components/common/PressableScale';
 import { useTheme } from '../context/ThemeContext';
 
 const COLS = 3;
@@ -101,9 +103,8 @@ export default function ArchivedReelsScreen({ navigation }) {
         </View>
       </TouchableOpacity>
 
-      <TouchableOpacity
+      <PressableScale
         onPress={() => onRestore(item)}
-        activeOpacity={0.85}
         disabled={restoring === item._id}
         style={[S.restoreBtn, { backgroundColor: palette.accent, opacity: restoring === item._id ? 0.6 : 1 }]}
       >
@@ -115,7 +116,7 @@ export default function ArchivedReelsScreen({ navigation }) {
             <Text style={S.restoreText}>Restore</Text>
           </>
         )}
-      </TouchableOpacity>
+      </PressableScale>
     </View>
   );
 
@@ -139,7 +140,7 @@ export default function ArchivedReelsScreen({ navigation }) {
           <ActivityIndicator size="large" color={palette.accent} />
         </View>
       ) : videos.length === 0 ? (
-        <View style={S.stateBox}>
+        <FadeInView style={S.stateBox}>
           <View style={[S.emptyIcon, { backgroundColor: palette.card }]}>
             <Ionicons name="archive-outline" size={30} color={palette.textMuted} />
           </View>
@@ -147,7 +148,7 @@ export default function ArchivedReelsScreen({ navigation }) {
           <Text style={[S.emptyBody,  { color: palette.textMuted }]}>
             Reels you archive from the "Manage your reel" sheet appear here.
           </Text>
-        </View>
+        </FadeInView>
       ) : (
         <FlatList
           data={videos}

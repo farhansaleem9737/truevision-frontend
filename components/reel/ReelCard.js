@@ -7,13 +7,13 @@
 //   • follow is local-only
 //   • everything else (UI, animations, comments button, more button) is identical
 //
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import {
   View, Text, TouchableWithoutFeedback, TouchableOpacity, Animated, Share, Alert,
   StyleSheet, Dimensions, ActivityIndicator,
 } from 'react-native';
 import AsyncStorage          from '@react-native-async-storage/async-storage';
-import * as FileSystem       from 'expo-file-system';
+import * as FileSystem       from 'expo-file-system/legacy'; // SDK54: downloadAsync/cacheDirectory live here
 import { useNavigation }     from '@react-navigation/native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { Image as ExpoImage } from 'expo-image';
@@ -31,7 +31,10 @@ import userService           from '../../services/UserService';
 import { buildFallbackChain } from '../../utils/videoQuality';
 import usePreferences        from '../../hooks/usePreferences';
 import useNetworkStatus      from '../../hooks/useNetworkStatus';
+import useAppActive          from '../../hooks/useAppActive';
+import videoCache            from '../../services/videoCache';
 import { useAuth }           from '../../context/AuthContext';
+import { useProfileNavigation } from '../../utils/profileNavigation';
 
 // Local-only save state for external imports (Pixabay etc). Those videos
 // aren't in our DB, so we can't persist saves server-side.
@@ -78,7 +81,7 @@ const HeartBurst = ({ visible, x, y }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-export default function ReelCard({ item, isActive, isFocused = true, onOpenComments, onHide, bottomOffset }) {
+function ReelCard({ item, isActive, isFocused = true, onOpenComments, onHide, bottomOffset }) {
   // External = anything that isn't an own upload (Pixabay, etc.).
   // External items skip backend mutations: likes/saves/etc. live in local
   // state only because the videos aren't in our database.
@@ -86,7 +89,9 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   const { prefs } = usePreferences();
   const { user }  = useAuth();
   const navigation = useNavigation();
+  const openProfile = useProfileNavigation();
   const net = useNetworkStatus();
+  const appActive = useAppActive();   // false while app is backgrounded
 
   // ── Content-preference driven playback ─────────────────────────────────
   // autoplay OFF  → videos never start on their own; the user taps play.
@@ -146,12 +151,38 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
     [item, effectiveDataSaver],
   );
   const [rung, setRung]         = useState(0);           // index into `chain`
-  const [playError, setPlayError] = useState(null);
-  const [retryToken, setRetryToken] = useState(0);       // bumps to force fresh player
+  const [unstable, setUnstable] = useState(false);       // soft hint only — never a blocking error
+  const [retryToken, setRetryToken] = useState(0);       // bumps to force a fresh load
+  const retryCycle = useRef(0);                          // full-chain cycles we've silently retried
+  const retryTimer = useRef(null);
+  useEffect(() => () => clearTimeout(retryTimer.current), []);
 
   const activeUrl = chain[rung] || '';
 
-  const player = useVideoPlayer(activeUrl, (p) => {
+  // Source resolution:
+  //  • Normal playback (retryToken 0): play from the local disk cache when this
+  //    URL was prefetched (instant start, survives background), else stream.
+  //    Stable per activeUrl so a late cache download never swaps a playing
+  //    source out from under the user.
+  //  • On a silent retry (retryToken > 0): BYPASS the cache (the cached file may
+  //    be the problem) and force a genuinely fresh network fetch by making the
+  //    URL unique — this reloads even a single-rung chain that wouldn't
+  //    otherwise change source.
+  const source = useMemo(() => {
+    if (retryToken > 0 && /^https?:\/\//i.test(activeUrl)) {
+      return activeUrl + (activeUrl.includes('?') ? '&' : '?') + '_r=' + retryToken;
+    }
+    return videoCache.cachedPath(activeUrl) || activeUrl;
+  }, [activeUrl, retryToken]);
+
+  // ONE stable player for this card's entire life. Passing the source to
+  // useVideoPlayer would RELEASE + RECREATE the native player on every source
+  // change (quality fallback, silent retry, cache swap) — and a VideoView
+  // updating with a just-released player throws "Cannot set prop 'player' …
+  // Cannot use shared object that was already released". Instead the player is
+  // created once (null source) and media is swapped on it via replaceAsync,
+  // which also reuses the decoder across rungs/retries (faster, less churn).
+  const player = useVideoPlayer(null, (p) => {
     p.loop  = true;
     p.muted = false;
     // Smaller forward buffer = faster first frame. Player keeps fetching after start.
@@ -165,11 +196,45 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
       } catch {}
     }
   });
+
+  // Swap the media source on the SAME player whenever it changes.
+  useEffect(() => {
+    (async () => {
+      try {
+        if (typeof player.replaceAsync === 'function') await player.replaceAsync(source || null);
+        else player.replace(source || null);
+      } catch (_) {
+        // Player already released (card unmounted mid-swap) — safe to ignore.
+      }
+    })();
+  }, [player, source]);
   useEvent(player, 'playingChange', { isPlaying: player.playing });
 
   const [isReady, setIsReady] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+
+  // ── View counting ───────────────────────────────────────────────────────
+  // A view is recorded ONCE per playback session, only after the video has
+  // actually played for ≥ 2.5 s OR ≥ 50 % of its length — never on mere
+  // scroll-past. Fired from the timeUpdate listener via refs so it adds no
+  // extra re-renders. The backend dedupes per signed-in user, so the count
+  // can't be inflated by re-watching.
+  const viewedRef   = useRef(false);
+  const isActiveRef = useRef(isActive);
+  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
+  // New reel loaded into this card → allow one fresh view record.
+  useEffect(() => { viewedRef.current = false; }, [item._id, item.id]);
+
+  // Spinner shown ONLY on the active card, and only after a short grace period —
+  // so a cached / instantly-ready video never flashes a spinner, and off-screen
+  // cards never render one at all (kills the feed-wide spinner flicker).
+  const [showSpinner, setShowSpinner] = useState(false);
+  useEffect(() => {
+    if (!isActive || isReady) { setShowSpinner(false); return; }
+    const t = setTimeout(() => setShowSpinner(true), 300);
+    return () => clearTimeout(t);
+  }, [isActive, isReady, activeUrl, retryToken]);
 
   // Reset per-URL state whenever the active URL flips (rung advance / retry).
   useEffect(() => {
@@ -181,13 +246,24 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   // Advance to the next rung if the current one fails or hasn't produced a
   // first frame in LOAD_TIMEOUT_MS. Called from both the timeout effect and
   // the statusChange 'error' branch to keep the recovery path single.
+  // Step DOWN the quality ladder on a stall/error. When the whole chain is
+  // exhausted we NEVER surface a blocking error — instead we silently retry the
+  // chain from the top with backoff, so a temporary network dip self-heals and
+  // the user just sees the spinner. Only after a couple of full failed cycles do
+  // we show a subtle, non-blocking "unstable" hint (and keep retrying).
   const stepFallbackOrFail = useCallback((reason) => {
     if (rung + 1 < chain.length) {
-      console.warn(`[ReelCard] Playback fallback (${reason}) — ${chain[rung]} → ${chain[rung + 1]}`);
-      setRung((r) => r + 1);
+      setRung((r) => r + 1);                        // try the next (lower) rung
     } else {
-      console.warn(`[ReelCard] Playback failed after ${chain.length} rungs (${reason})`);
-      setPlayError(reason);
+      retryCycle.current += 1;
+      if (retryCycle.current >= 2) setUnstable(true);
+      const delay = Math.min(1000 * retryCycle.current, 6000); // gentle backoff
+      clearTimeout(retryTimer.current);
+      retryTimer.current = setTimeout(() => {
+        if (!isActiveRef.current) return;           // don't churn on off-screen cards
+        setRung(0);                                  // back to the highest rung
+        setRetryToken((n) => n + 1);                 // force a genuinely fresh load
+      }, delay);
     }
   }, [chain, rung]);
 
@@ -196,7 +272,9 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
     const s1 = player.addListener('statusChange', ({ status, error }) => {
       if (status === 'readyToPlay') {
         setIsReady(true);
-        setPlayError(null);
+        setUnstable(false);                 // recovered → clear the hint
+        retryCycle.current = 0;
+        clearTimeout(retryTimer.current);
         setDuration(player.duration ?? 0);
       } else if (status === 'error') {
         stepFallbackOrFail(error?.message || 'Playback error');
@@ -205,6 +283,18 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
     const s2 = player.addListener('timeUpdate', ({ currentTime }) => {
       const t = currentTime ?? 0;
       setProgress(duration > 0 ? t / duration : 0);
+
+      // Record a real view once the watch threshold is crossed. Own uploads
+      // are counted too (matches Instagram/TikTok). External/stock clips have
+      // no DB record, so they're skipped.
+      if (!viewedRef.current && isActiveRef.current && !isExternal) {
+        const vid = item._id || item.id;
+        const enough = t >= 2.5 || (duration > 0 && t / duration >= 0.5);
+        if (vid && enough) {
+          viewedRef.current = true;
+          videoService.recordView(vid, Math.round(t * 1000)).catch(() => {});
+        }
+      }
     });
     // playbackError is a separate channel on some player versions.
     let s3;
@@ -220,18 +310,10 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   // within LOAD_TIMEOUT_MS, step to the next rung. Only runs when the row
   // is actually meant to be playing (visible + focused).
   useEffect(() => {
-    if (isReady || playError || !activeUrl || !isActive || !isFocused) return;
+    if (isReady || !activeUrl || !isActive || !isFocused) return;
     const t = setTimeout(() => stepFallbackOrFail('load-timeout'), LOAD_TIMEOUT_MS);
     return () => clearTimeout(t);
-  }, [isReady, playError, activeUrl, isActive, isFocused, retryToken, stepFallbackOrFail]);
-
-  // Manual retry — reset to the primary rung, bump the token so the player
-  // effect re-fires even if `activeUrl` is unchanged.
-  const retryPlayback = useCallback(() => {
-    setPlayError(null);
-    setRung(0);
-    setRetryToken((n) => n + 1);
-  }, []);
+  }, [isReady, activeUrl, isActive, isFocused, retryToken, stepFallbackOrFail]);
 
   // Play/pause based on viewability AND screen focus.
   // isFocused becomes false when the user navigates to another tab — that
@@ -251,10 +333,14 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
 
   const allowedToPlay = autoplayPref || manualStart;
 
+  // Playback gate: visible AND screen-focused AND app in the FOREGROUND. Adding
+  // `appActive` pauses the moment the app is backgrounded (no bleeding audio,
+  // no CPU/battery drain) and resumes on return — the player instance is never
+  // recreated, so the buffer is retained and the current video does not reload.
   useEffect(() => {
-    if (isActive && isFocused && !userPaused && !playError && allowedToPlay) player.play();
+    if (isActive && isFocused && appActive && !userPaused && allowedToPlay) player.play();
     else player.pause();
-  }, [isActive, isFocused, userPaused, playError, allowedToPlay, player]);
+  }, [isActive, isFocused, appActive, userPaused, allowedToPlay, player]);
 
   // ── Social state ────────────────────────────────────────────────────────
   const [isLiked,     setIsLiked]     = useState(item.isLiked     ?? false);
@@ -284,6 +370,17 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
   const pauseAnim           = useRef(new Animated.Value(0)).current;
   const lastTap             = useRef(0);
 
+  // Subtle TikTok/Reels-style play/pause flash: pop in (~90ms), brief hold,
+  // fade out (~180ms). Total ≈ 150–200ms of clear visibility — no heavy motion.
+  const flashPauseIcon = useCallback(() => {
+    pauseAnim.setValue(0);
+    Animated.sequence([
+      Animated.timing(pauseAnim, { toValue: 1, duration: 90, useNativeDriver: true }),
+      Animated.delay(110),
+      Animated.timing(pauseAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
+    ]).start();
+  }, [pauseAnim]);
+
   const handleTap = useCallback((evt) => {
     const now = Date.now();
     const { locationX, locationY } = evt.nativeEvent;
@@ -303,18 +400,13 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
       // first tap STARTS it (satisfies the gate) rather than toggling pause.
       if (!autoplayPref && !manualStart) {
         setManualStart(true);
-        pauseAnim.setValue(1);
-        Animated.timing(pauseAnim, { toValue: 0, duration: 600, delay: 300, useNativeDriver: true }).start();
+        flashPauseIcon();
       } else {
-        setUserPaused(p => {
-          pauseAnim.setValue(1);
-          Animated.timing(pauseAnim, { toValue: 0, duration: 600, delay: 300, useNativeDriver: true }).start();
-          return !p;
-        });
+        setUserPaused(p => { flashPauseIcon(); return !p; });
       }
     }
     lastTap.current = now;
-  }, [isLiked, item._id, item.id, isExternal, pauseAnim, autoplayPref, manualStart]);
+  }, [isLiked, item._id, item.id, isExternal, flashPauseIcon, autoplayPref, manualStart]);
 
   // ── Action handlers ─────────────────────────────────────────────────────
   const handleLike = () => {
@@ -509,32 +601,31 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
             style={[S.gradBot, { height: bottomOffset + 220 }]} pointerEvents="none"
           />
 
-          {/* Loading spinner — hidden once we surface an error card so the
-              spinner never fights the retry UI. */}
-          {!isReady && !playError && (
+          {/* Loading spinner — active card only, after a 300ms grace period, and
+              never while an error card is showing. Cached/instant videos and
+              off-screen cards never flash it. */}
+          {showSpinner && (
             <View style={S.loader}>
               <ActivityIndicator size="large" color="#fff" />
             </View>
           )}
 
-          {/* Error card + Retry — replaces the infinite spinner when every
-              fallback rung has failed. Tapping Retry resets to the primary
-              URL and re-runs the load, giving Cloudinary any extra time it
-              still needed to finish the eager transcode. */}
-          {playError && (
-            <View style={S.errorCard}>
-              <Ionicons name="cloud-offline-outline" size={44} color="rgba(255,255,255,0.85)" />
-              <Text style={S.errorTitle}>Playback unavailable</Text>
-              <Text style={S.errorSub}>The video could not be loaded right now.</Text>
-              <TouchableOpacity style={S.retryBtn} onPress={retryPlayback} activeOpacity={0.85}>
-                <Ionicons name="refresh" size={18} color="#fff" />
-                <Text style={S.retryTxt}>Try again</Text>
-              </TouchableOpacity>
+          {/* Subtle "connection unstable" hint — NON-blocking and auto-retrying.
+              Never a fullscreen error, never a "Try again" button; the player
+              keeps silently retrying and recovers on its own when the network
+              returns. Only appears after repeated failures on the active card. */}
+          {unstable && isActive && !isReady && (
+            <View pointerEvents="none" style={S.unstablePill}>
+              <ActivityIndicator size="small" color="#fff" />
+              <Text style={S.unstableTxt}>Connection is unstable. Retrying…</Text>
             </View>
           )}
 
-          {/* Pause/play flash */}
-          <Animated.View pointerEvents="none" style={[S.pauseFlash, { opacity: pauseAnim }]}>
+          {/* Pause/play flash — quick pop + fade */}
+          <Animated.View pointerEvents="none" style={[S.pauseFlash, {
+            opacity: pauseAnim,
+            transform: [{ scale: pauseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
+          }]}>
             <View style={S.pauseBg}>
               <Ionicons name={userPaused ? 'play' : 'pause'} size={36} color="#fff" />
             </View>
@@ -542,7 +633,7 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
 
           {/* Auto-play OFF: a persistent play affordance while the reel is
               active but hasn't been manually started yet. */}
-          {isActive && isFocused && !playError && !autoplayPref && !manualStart && (
+          {isActive && isFocused && !autoplayPref && !manualStart && (
             <View pointerEvents="none" style={S.tapToPlay}>
               <View style={S.tapToPlayBtn}>
                 <Ionicons name="play" size={40} color="#fff" />
@@ -587,8 +678,9 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
         onRepost={handleRepost}
         onMore={() => setShowMore(true)}
         // External/stock videos have no TrueVision profile to open.
+        // openProfile() decides own-vs-other automatically (own → Profile tab).
         onAvatarPress={() => {
-          if (!isExternal && ownerId) navigation.navigate('UserProfile', { userId: String(ownerId) });
+          if (!isExternal && ownerId) openProfile(ownerId);
         }}
         style={{ bottom: bottomOffset + 100 }}
       />
@@ -605,6 +697,10 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
         followStatus={isOwner ? 'following' : followStatus}
         isVerified={isVerified}
         onFollow={handleFollow}
+        // Tap the @username → open the creator's profile (same as the avatar).
+        onUsernamePress={() => {
+          if (!isExternal && ownerId) openProfile(ownerId);
+        }}
         style={{ bottom: bottomOffset + 14 }}
       />
 
@@ -639,10 +735,13 @@ export default function ReelCard({ item, isActive, isFocused = true, onOpenComme
       )}
 
       {/* ── Info panel (Fact / News / Opinion) ────────────────────────── */}
+      {/* bottomOffset lifts the sheet above the absolute tab bar so the last
+          evidence card is never clipped behind it. */}
       <VideoInfoPanel
         visible={showInfo}
         onClose={() => setShowInfo(false)}
         video={item}
+        bottomOffset={bottomOffset || 0}
       />
     </View>
   );
@@ -664,20 +763,26 @@ const S = StyleSheet.create({
   // most devices without needing useSafeAreaInsets in this component).
   infoBtnWrap:  { position: 'absolute', top: 56, right: 14, zIndex: 25 },
 
-  // Playback-error card + retry — sits centre-screen over the video so the
-  // thumbnail behind it still hints at the video contents.
-  errorCard:  {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 32,
+  // Subtle, non-blocking "connection unstable" hint — a small pill centred over
+  // the video (thumbnail stays visible behind it). No fullscreen takeover, no
+  // "Try again"; the player keeps retrying silently and recovers on its own.
+  unstablePill: {
+    position: 'absolute', alignSelf: 'center', top: '50%', marginTop: 44,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  errorTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginTop: 14 },
-  errorSub:   { color: 'rgba(255,255,255,0.72)', fontSize: 13, marginTop: 6, textAlign: 'center' },
-  retryBtn:   {
-    marginTop: 18, flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 18, paddingVertical: 10,
-    borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
-  },
-  retryTxt:   { color: '#fff', fontWeight: '700', marginLeft: 8, fontSize: 14 },
+  unstableTxt: { color: '#fff', fontSize: 12.5, fontWeight: '600', marginLeft: 8 },
 });
+
+// Memoized so an activeIndex change re-renders only the two cards whose
+// isActive actually flips — not every mounted card in the window. Props are
+// primitives + a stable `item` object + parent-memoized callbacks.
+export default memo(ReelCard, (prev, next) =>
+  prev.item === next.item &&
+  prev.isActive === next.isActive &&
+  prev.isFocused === next.isFocused &&
+  prev.bottomOffset === next.bottomOffset &&
+  prev.onOpenComments === next.onOpenComments &&
+  prev.onHide === next.onHide,
+);

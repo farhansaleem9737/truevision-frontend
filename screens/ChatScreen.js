@@ -27,6 +27,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useConfirm } from '../components/common/ConfirmProvider';
 import chatService   from '../services/ChatService';
 import socketService from '../services/SocketService';
 
@@ -271,6 +272,7 @@ export default function ChatScreen() {
   const insets       = useSafeAreaInsets();
   const { colors }   = useTheme();
   const navigation   = useNavigation();
+  const confirm      = useConfirm();
   const { user }     = useAuth(); // eslint-disable-line no-unused-vars
 
   const [chats,          setChats]         = useState([]);
@@ -407,20 +409,19 @@ export default function ChatScreen() {
     if (!res?.success) loadChats();
   }, [loadChats]);
 
-  const onDelete = useCallback((chat) => {
-    Alert.alert(
-      'Clear this chat?',
-      'Messages will be removed from your view. The other participant will still see them.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Clear',  style: 'destructive', onPress: async () => {
-          setChats(prev => prev.filter(c => c._id !== chat._id));
-          const res = await chatService.clearChatHistory(chat._id);
-          if (!res?.success) loadChats();
-        }},
-      ],
-    );
-  }, [loadChats]);
+  const onDelete = useCallback(async (chat) => {
+    const ok = await confirm({
+      title:       'Clear this chat?',
+      message:     'Messages will be removed from your view. The other participant will still see them.',
+      confirmText: 'Clear',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    setChats(prev => prev.filter(c => c._id !== chat._id));
+    const res = await chatService.clearChatHistory(chat._id);
+    if (!res?.success) loadChats();
+  }, [loadChats, confirm]);
 
   // ── Render helpers ──────────────────────────────────────────────────────
   const isSearching = searchQuery.trim().length > 0;

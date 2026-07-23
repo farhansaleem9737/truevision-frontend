@@ -1,10 +1,11 @@
 // truevision/components/discover/SearchTabs.js
 //
-// Top / Users / Videos / Hashtags tab selector. Animated underline tracks
-// the active tab. Used only when the user is actively searching.
+// Top / Users / Videos / Hashtags tab selector. A purple underline springs to
+// the active tab. Theme-aware via useSearchTheme. Shown only while searching.
 
 import { useEffect, useRef } from 'react';
-import { Animated, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Animated, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { useSearchTheme } from './searchTheme';
 
 const TABS = [
   { key: 'top',      label: 'Top' },
@@ -14,27 +15,25 @@ const TABS = [
 ];
 
 export default function SearchTabs({ active, onChange }) {
+  const c = useSearchTheme();
   const { width } = useWindowDimensions();
   const tabWidth  = width / TABS.length;
-  const underline = useRef(new Animated.Value(TABS.findIndex((t) => t.key === active) * tabWidth)).current;
+  const idx       = Math.max(0, TABS.findIndex((t) => t.key === active));
+  const underline = useRef(new Animated.Value(idx * tabWidth)).current;
 
   useEffect(() => {
-    const idx = TABS.findIndex((t) => t.key === active);
     Animated.spring(underline, {
-      toValue: Math.max(0, idx) * tabWidth,
+      toValue: idx * tabWidth,
       useNativeDriver: true,
       friction: 18, tension: 200,
     }).start();
-  }, [active, tabWidth]);
+  }, [idx, tabWidth]); // eslint-disable-line
+
+  const INDICATOR = tabWidth * 0.42;
 
   return (
-    <View style={S.wrap}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        scrollEnabled={false}
-        contentContainerStyle={{ flexDirection: 'row' }}
-      >
+    <View style={[S.wrap, { backgroundColor: c.bg, borderBottomColor: c.divider }]}>
+      <View style={S.rowInner}>
         {TABS.map((tab) => {
           const isActive = active === tab.key;
           return (
@@ -44,19 +43,23 @@ export default function SearchTabs({ active, onChange }) {
               activeOpacity={0.7}
               style={[S.tab, { width: tabWidth }]}
             >
-              <Text style={[S.label, isActive && S.labelActive]}>{tab.label}</Text>
+              <Text style={[
+                S.label,
+                { color: isActive ? c.text : c.textDim, fontWeight: isActive ? '800' : '600' },
+              ]}>
+                {tab.label}
+              </Text>
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
+      </View>
       <Animated.View
         style={[
           S.indicator,
           {
-            width: tabWidth * 0.36,
-            transform: [{
-              translateX: Animated.add(underline, new Animated.Value((tabWidth - tabWidth * 0.36) / 2)),
-            }],
+            width: INDICATOR,
+            backgroundColor: c.accent,
+            transform: [{ translateX: Animated.add(underline, new Animated.Value((tabWidth - INDICATOR) / 2)) }],
           },
         ]}
       />
@@ -67,15 +70,12 @@ export default function SearchTabs({ active, onChange }) {
 export { TABS as SEARCH_TABS };
 
 const S = StyleSheet.create({
-  wrap: {
-    backgroundColor: '#fff',
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#e2e8f0',
-  },
-  tab:  { paddingVertical: 12, alignItems: 'center' },
-  label: { fontSize: 14, fontWeight: '600', color: '#94a3b8' },
-  labelActive: { color: '#0f172a', fontWeight: '800' },
+  wrap: { borderBottomWidth: StyleSheet.hairlineWidth },
+  rowInner: { flexDirection: 'row' },
+  tab: { paddingVertical: 13, alignItems: 'center' },
+  label: { fontSize: 14 },
   indicator: {
-    position: 'absolute', bottom: 0, left: 0,
-    height: 2.5, borderRadius: 2, backgroundColor: '#0f172a',
+    position: 'absolute', bottom: -0.5, left: 0,
+    height: 2.5, borderRadius: 2,
   },
 });

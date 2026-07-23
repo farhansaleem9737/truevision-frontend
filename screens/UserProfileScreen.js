@@ -13,20 +13,23 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Dimensions, FlatList, RefreshControl,
+  ActivityIndicator, Alert, Dimensions, FlatList, RefreshControl, Share,
   StatusBar, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image as ExpoImage } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../components/settings/ScreenHeader';
+import { useConfirm } from '../components/common/ConfirmProvider';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import userService from '../services/UserService';
 import videoService from '../services/VideoService';
 import activityService from '../services/ActivityService';
 import chatService from '../services/ChatService';
+import callService from '../services/CallService';
 
 const { width } = Dimensions.get('window');
 const GRID_GAP  = 2;
@@ -104,11 +107,22 @@ const VideoTile = ({ video, onPress, colors }) => (
 export default function UserProfileScreen({ route, navigation }) {
   const { userId } = route.params || {};
   const insets = useSafeAreaInsets();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { user: authUser } = useAuth();
+  const confirm = useConfirm();
 
   const myId   = authUser?._id || authUser?.id;
   const isSelf = !!myId && !!userId && String(myId) === String(userId);
+
+  // Defense-in-depth: every in-app entry point already routes own profiles to
+  // the Profile tab via useProfileNavigation(). But a deep link or a stray
+  // navigation could still land here with our own id — redirect to My Profile
+  // so we never render a read-only "other user" view of ourselves.
+  useEffect(() => {
+    if (isSelf) {
+      navigation.navigate('MainApp', { screen: 'Profile' });
+    }
+  }, [isSelf, navigation]);
 
   const [user, setUser]           = useState(null);
   const [phase, setPhase]         = useState('loading'); // 'loading' | 'ready' | 'error'
@@ -121,6 +135,15 @@ export default function UserProfileScreen({ route, navigation }) {
   const [vidPage, setVidPage]           = useState(1);
   const [vidHasMore, setVidHasMore]     = useState(false);
   const [loadingMore, setLoadingMore]   = useState(false);
+
+  // Posts / Reposts tabs (parity with My Profile). Reposts are the ORIGINAL
+  // videos this user reposted — tapping one opens the original, so the
+  // creator attribution on the player is naturally the original creator.
+  const [activeTab, setActiveTab]         = useState('grid'); // 'grid' | 'reposted'
+  const [reposts, setReposts]             = useState([]);
+  const [repostsLoading, setRepostsLoading] = useState(false);
+  const [repostsLoaded, setRepostsLoaded]   = useState(false);
+  const repInFlight = useRef(0);
 
   const [followBusy, setFollowBusy] = useState(false);
   const [msgBusy, setMsgBusy]       = useState(false);
@@ -181,6 +204,18 @@ export default function UserProfileScreen({ route, navigation }) {
     setLoadingMore(false);
   }, [userId]);
 
+  // ── Reposts loader (single page; parity with My Profile) ─────────────────
+  const loadReposts = useCallback(async () => {
+    if (!userId) return;
+    const token = ++repInFlight.current;
+    setRepostsLoading(true);
+    const res = await videoService.getUserReposts(userId, 1, 30);
+    if (token !== repInFlight.current) return;
+    setReposts(res?.success && Array.isArray(res.videos) ? res.videos : []);
+    setRepostsLoaded(true);
+    setRepostsLoading(false);
+  }, [userId]);
+
   // First load
   useEffect(() => { loadProfile(); }, [loadProfile]);
 
@@ -198,6 +233,11 @@ export default function UserProfileScreen({ route, navigation }) {
     if (phase === 'ready' && canViewContent) loadVideos(1);
   }, [phase, canViewContent, loadVideos]);
 
+  // Lazy-load reposts the first time the Reposts tab is opened.
+  useEffect(() => {
+    if (activeTab === 'reposted' && canViewContent && !repostsLoaded) loadReposts();
+  }, [activeTab, canViewContent, repostsLoaded, loadReposts]);
+
   // Silent refresh when coming back (counts may have changed in FollowList).
   useFocusEffect(useCallback(() => {
     if (firstFocus.current) { firstFocus.current = false; return; }
@@ -207,10 +247,16 @@ export default function UserProfileScreen({ route, navigation }) {
   const onRefresh = () => {
     setRefreshing(true);
     loadProfile({ silent: true });
-    if (canViewContent) loadVideos(1);
+    if (canViewContent) {
+      loadVideos(1);
+      // Refresh whichever tab is open (reposts only if already opened once).
+      if (activeTab === 'reposted' || repostsLoaded) loadReposts();
+    }
   };
 
   const onEndReached = () => {
+    // Only the Posts grid paginates; reposts load as a single page.
+    if (activeTab !== 'grid') return;
     if (!canViewContent || videosPrivate) return;
     if (loadingMore || videosLoading || !vidHasMore) return;
     loadVideos(vidPage + 1);
@@ -273,22 +319,19 @@ export default function UserProfileScreen({ route, navigation }) {
     setFollowBusy(false);
   };
 
-  const confirmUnfollow = () => {
+  const confirmUnfollow = async () => {
     const requested = followState === 'requested';
-    Alert.alert(
-      requested ? 'Cancel follow request?' : `Unfollow @${user?.username || 'user'}?`,
-      requested
+    const ok = await confirm({
+      title:       requested ? 'Cancel follow request?' : `Unfollow @${user?.username || 'user'}?`,
+      message:     requested
         ? 'They have not approved your request yet.'
         : 'If their account is private, you will need to request again.',
-      [
-        { text: requested ? 'Keep request' : 'Cancel', style: 'cancel' },
-        {
-          text: requested ? 'Cancel request' : 'Unfollow',
-          style: 'destructive',
-          onPress: doUnfollow,
-        },
-      ],
-    );
+      confirmText: requested ? 'Cancel request' : 'Unfollow',
+      cancelText:  requested ? 'Keep request' : 'Cancel',
+      destructive: true,
+      icon:        'person-remove-outline',
+    });
+    if (ok) doUnfollow();
   };
 
   const onFollowPress = () => {
@@ -317,6 +360,27 @@ export default function UserProfileScreen({ route, navigation }) {
     }
   };
 
+  // ── Share profile ──────────────────────────────────────────────────────────
+  const shareProfile = async () => {
+    if (!user?.username) return;
+    try {
+      await Share.share({
+        message: `Check out @${user.username} on TrueVision`,
+      });
+    } catch (_) { /* user dismissed the sheet — no-op */ }
+  };
+
+  // ── Voice / video call ─────────────────────────────────────────────────────
+  // Starts a WebRTC call; the CallProvider overlay takes over the screen.
+  // Blocked users can't be called.
+  const startCall = (mode) => {
+    if (!user || user.isBlockedByMe) return;
+    callService.placeCall(
+      { _id: user._id, fullName: user.fullName, username: user.username, profileImage: user.profileImage },
+      mode, // 'audio' | 'video'
+    );
+  };
+
   // ── Block / unblock ──────────────────────────────────────────────────────
   const doBlock = async () => {
     if (blockBusy) return;
@@ -332,15 +396,15 @@ export default function UserProfileScreen({ route, navigation }) {
     }
   };
 
-  const confirmBlock = () => {
-    Alert.alert(
-      `Block @${user?.username || 'user'}?`,
-      "They won't be able to follow you, message you, or see your videos. You can unblock them anytime.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Block', style: 'destructive', onPress: doBlock },
-      ],
-    );
+  const confirmBlock = async () => {
+    const ok = await confirm({
+      title:       `Block @${user?.username || 'user'}?`,
+      message:     "They won't be able to follow you, message you, or see your videos. You can unblock them anytime.",
+      confirmText: 'Block',
+      destructive: true,
+      icon:        'ban-outline',
+    });
+    if (ok) doBlock();
   };
 
   const handleUnblock = async () => {
@@ -378,8 +442,10 @@ export default function UserProfileScreen({ route, navigation }) {
     navigation.navigate('FollowList', { userId, mode, username: user?.username });
   };
 
-  const openVideo = (idx) => {
-    navigation.navigate('VideoPlayer', { videos, initialIndex: idx });
+  // Open into the currently-active list so a repost opens the original video
+  // (reposts ARE the original video docs) with correct creator attribution.
+  const openVideo = (idx, list) => {
+    navigation.navigate('VideoPlayer', { videos: list, initialIndex: idx });
   };
 
   // ── Header block (scrolls with the grid) ─────────────────────────────────
@@ -387,8 +453,34 @@ export default function UserProfileScreen({ route, navigation }) {
     if (!user) return null;
     return (
       <View>
-        <View style={S.profileBlock}>
-          <Avatar uri={user.profileImage} name={user.fullName} size={100} colors={colors} />
+        {/* Header wash — a real cover image when the user has one, otherwise a
+            subtle TrueVision-branded fade into the background (no giant blue
+            rectangle). Vertical fade keeps it premium and unobtrusive. */}
+        <View style={[S.coverWrap, { backgroundColor: colors.bg }]}>
+          {user.coverImage ? (
+            <ExpoImage
+              source={{ uri: user.coverImage }}
+              style={S.cover}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={200}
+            />
+          ) : (
+            <LinearGradient
+              colors={[
+                isDark ? 'rgba(108,92,255,0.22)' : 'rgba(108,92,255,0.12)',
+                colors.bg,
+              ]}
+              start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }}
+              style={S.cover}
+            />
+          )}
+        </View>
+
+        <View style={[S.profileBlock, { marginTop: -46 }]}>
+          <View style={[S.avatarRing, { backgroundColor: colors.background }]}>
+            <Avatar uri={user.profileImage} name={user.fullName} size={100} colors={colors} />
+          </View>
 
           <View style={S.nameRow}>
             <Text style={[S.fullName, { color: colors.text }]} numberOfLines={1}>
@@ -490,26 +582,90 @@ export default function UserProfileScreen({ route, navigation }) {
                 <Text style={[S.messageBtnText, { color: colors.text }]}>Message</Text>
               )}
             </TouchableOpacity>
+
+            {/* Voice + video call */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => startCall('audio')}
+              style={[S.callBtn, { borderColor: colors.divider }]}
+              accessibilityLabel="Voice call"
+              accessibilityRole="button"
+            >
+              <Ionicons name="call-outline" size={19} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => startCall('video')}
+              style={[S.callBtn, { borderColor: colors.divider }]}
+              accessibilityLabel="Video call"
+              accessibilityRole="button"
+            >
+              <Ionicons name="videocam-outline" size={20} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={shareProfile}
+              style={[S.callBtn, { borderColor: colors.divider }]}
+              accessibilityLabel="Share profile"
+              accessibilityRole="button"
+            >
+              <Ionicons name="share-outline" size={19} color={colors.text} />
+            </TouchableOpacity>
           </View>
         ) : null}
 
-        <View style={[S.gridDivider, { borderTopColor: colors.divider }]} />
+        {/* Posts / Reposts tabs — only when there's viewable content to show.
+            Blocked / private states keep their dedicated full-width message. */}
+        {canViewContent && !user.isBlockedByMe ? (
+          <View style={[S.tabBar, { borderTopColor: colors.divider, borderBottomColor: colors.divider }]}>
+            <TouchableOpacity
+              style={[S.tab, activeTab === 'grid' && { borderBottomColor: colors.text }]}
+              onPress={() => setActiveTab('grid')}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={activeTab === 'grid' ? 'grid' : 'grid-outline'}
+                size={20}
+                color={activeTab === 'grid' ? colors.text : colors.textDim}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[S.tab, activeTab === 'reposted' && { borderBottomColor: colors.text }]}
+              onPress={() => setActiveTab('reposted')}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={activeTab === 'reposted' ? 'repeat' : 'repeat-outline'}
+                size={22}
+                color={activeTab === 'reposted' ? colors.text : colors.textDim}
+              />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={[S.gridDivider, { borderTopColor: colors.divider }]} />
+        )}
       </View>
     );
   };
 
   // ── Body states ──────────────────────────────────────────────────────────
+  const isReposts     = activeTab === 'reposted';
   const contentLocked = !!user && (!user.canViewContent || videosPrivate) && !user.isBlockedByMe;
-  const showSkeleton  = canViewContent && !videosPrivate && videosLoading && videos.length === 0;
+  const showSkeleton  = !isReposts && canViewContent && !videosPrivate && videosLoading && videos.length === 0;
+  const showRepostSkeleton = isReposts && canViewContent && repostsLoading && reposts.length === 0;
 
+  // The list feeding the grid depends on the active tab.
+  const activeList = isReposts ? reposts : videos;
   const listData = user?.isBlockedByMe || contentLocked
     ? []
-    : showSkeleton ? SKELETON_DATA : videos;
+    : showSkeleton || showRepostSkeleton
+      ? SKELETON_DATA
+      : activeList;
 
   const renderItem = ({ item, index }) => (
-    showSkeleton
+    (showSkeleton || showRepostSkeleton)
       ? <View style={[S.tile, { backgroundColor: colors.iconChipBg }]} />
-      : <VideoTile video={item} colors={colors} onPress={() => openVideo(index)} />
+      : <VideoTile video={item} colors={colors} onPress={() => openVideo(index, activeList)} />
   );
 
   const renderEmpty = () => {
@@ -546,6 +702,21 @@ export default function UserProfileScreen({ route, navigation }) {
           <Text style={[S.stateTitle, { color: colors.text }]}>This Account is Private</Text>
           <Text style={[S.stateSub, { color: colors.textMuted }]}>
             Follow this account to see their videos.
+          </Text>
+        </View>
+      );
+    }
+    // Reposts tab empty / loading.
+    if (isReposts) {
+      if (repostsLoading && reposts.length === 0) return null;
+      return (
+        <View style={S.stateWrap}>
+          <View style={[S.stateIconWrap, { backgroundColor: colors.iconChipBg }]}>
+            <Ionicons name="repeat-outline" size={38} color={colors.textMuted} />
+          </View>
+          <Text style={[S.stateTitle, { color: colors.text }]}>No reposted videos yet</Text>
+          <Text style={[S.stateSub, { color: colors.textMuted }]}>
+            Videos they repost will appear here.
           </Text>
         </View>
       );
@@ -660,6 +831,11 @@ function ProfileSkeleton({ colors }) {
 const S = StyleSheet.create({
   root: { flex: 1 },
 
+  // Cover banner
+  coverWrap:      { width: '100%', height: 132, overflow: 'hidden' },
+  cover:          { width: '100%', height: '100%' },
+  avatarRing:     { borderRadius: 56, padding: 4 },
+
   // Profile block
   profileBlock:   { alignItems: 'center', paddingTop: 24, paddingHorizontal: 22 },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },
@@ -701,8 +877,27 @@ const S = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   messageBtnText: { fontSize: 14.5, fontWeight: '800' },
+  callBtn: {
+    width: 42, height: 42, borderRadius: 21, borderWidth: 1.5,
+    alignItems: 'center', justifyContent: 'center',
+  },
 
   gridDivider: { borderTopWidth: StyleSheet.hairlineWidth, marginBottom: GRID_GAP },
+
+  // Posts / Reposts tab bar
+  tabBar: {
+    flexDirection: 'row',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginBottom: GRID_GAP,
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
 
   // Grid tiles
   tile:            { width: TILE, height: TILE },

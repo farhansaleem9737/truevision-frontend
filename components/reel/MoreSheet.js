@@ -17,7 +17,8 @@ import {
   Modal, Animated, Dimensions, Share, Alert, StyleSheet, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy'; // SDK54: downloadAsync/cacheDirectory live here
+import { useConfirm } from '../common/ConfirmProvider';
 
 const { height } = Dimensions.get('window');
 
@@ -31,6 +32,7 @@ const OPTIONS = [
 ];
 
 export default function MoreSheet({ visible, onClose, item, onHide }) {
+  const confirm = useConfirm();
   const slideY = useRef(new Animated.Value(height)).current;
 
   useEffect(() => {
@@ -57,13 +59,17 @@ export default function MoreSheet({ visible, onClose, item, onHide }) {
         onHide?.(item, key);
         break;
 
-      case 'report':
-        Alert.alert(
-          'Report video',
-          'Thanks — we\'ll review this content. You won\'t see it again.',
-          [{ text: 'OK', onPress: () => onHide?.(item, 'report') }],
-        );
+      case 'report': {
+        const ok = await confirm({
+          title:       'Report this video?',
+          message:     "We'll review this content and you won't see it again.",
+          confirmText: 'Report',
+          destructive: true,
+          icon:        'flag-outline',
+        });
+        if (ok) onHide?.(item, 'report');
         break;
+      }
 
       case 'share-link': {
         try {

@@ -22,13 +22,14 @@ import { useFocusEffect }     from '@react-navigation/native';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient }     from 'expo-linear-gradient';
 import { Ionicons }           from '@expo/vector-icons';
-import * as FileSystem        from 'expo-file-system';
+import * as FileSystem        from 'expo-file-system/legacy'; // SDK54: downloadAsync/cacheDirectory live here
 import { useAuth }            from '../context/AuthContext';
 import { useTheme }           from '../context/ThemeContext';
 import userService            from '../services/UserService';
 import videoService           from '../services/VideoService';
 import { API_URL }            from '../services/config';
 import MoreOptionsSheet       from '../components/profile/MoreOptionsSheet';
+import ConfirmDialog          from '../components/ui/ConfirmDialog';
 import ManageReelSheet        from '../components/reel/ManageReelSheet';
 
 const { width } = Dimensions.get('window');
@@ -142,6 +143,7 @@ export default function ProfileScreen({ navigation }) {
   const [errorInfo, setErrorInfo]   = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showMore, setShowMore]     = useState(false);
+  const [logoutConfirm, setLogoutConfirm] = useState(false); // themed logout dialog
   const [actionsVideo, setActionsVideo] = useState(null); // long-pressed tile
   const [repostsLoaded, setRepostsLoaded] = useState(false);
   const [repostsLoading, setRepostsLoading] = useState(false);
@@ -510,7 +512,7 @@ export default function ProfileScreen({ navigation }) {
           ) : null
         }
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3b82f6" />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6C5CFF" />
         }
         showsVerticalScrollIndicator={false}
         removeClippedSubviews
@@ -525,7 +527,20 @@ export default function ProfileScreen({ navigation }) {
         onSettings={() => navigation.navigate('Settings')}
         onHelp={() => navigation.navigate('HelpSupport')}
         onArchived={() => navigation.navigate('ArchivedReels')}
-        onLogout={async () => { await logout(); }}
+        onLogout={() => setLogoutConfirm(true)}
+      />
+
+      {/* Themed logout confirmation — replaces the stock system Alert */}
+      <ConfirmDialog
+        visible={logoutConfirm}
+        icon="log-out-outline"
+        title="Log out?"
+        message="You’ll need to sign in again to access your account."
+        confirmLabel="Log out"
+        cancelLabel="Cancel"
+        destructive
+        onCancel={() => setLogoutConfirm(false)}
+        onConfirm={async () => { setLogoutConfirm(false); await logout(); }}
       />
 
       <ManageReelSheet
@@ -574,7 +589,7 @@ function EmptyState({ onUpload }) {
   return (
     <View style={S.emptyWrap}>
       <View style={S.emptyIconWrap}>
-        <Ionicons name="videocam-outline" size={42} color="#3b82f6" />
+        <Ionicons name="videocam-outline" size={42} color="#6C5CFF" />
       </View>
       <Text style={S.emptyTitle}>No videos uploaded yet</Text>
       <Text style={S.emptySub}>Share your first reel and it'll appear here.</Text>
@@ -610,7 +625,7 @@ const S = StyleSheet.create({
   profileBlock: { alignItems: 'center', paddingTop: 24, paddingHorizontal: 22 },
   ringOuter:    { alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   ringInner:    { backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  avatarFallback:{ backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' },
+  avatarFallback:{ backgroundColor: '#6C5CFF', alignItems: 'center', justifyContent: 'center' },
   avatarInitials:{ color: '#fff', fontWeight: '800' },
 
   fullName: { fontSize: 20, fontWeight: '800', color: '#0f172a', marginTop: 2 },
@@ -675,7 +690,7 @@ const S = StyleSheet.create({
   uploadCta: {
     flexDirection: 'row', alignItems: 'center',
     marginTop: 20, paddingHorizontal: 22, paddingVertical: 11,
-    borderRadius: 22, backgroundColor: '#3b82f6',
+    borderRadius: 22, backgroundColor: '#6C5CFF',
   },
   uploadCtaText: { color: '#fff', fontWeight: '800', fontSize: 14, marginLeft: 6 },
 
@@ -702,7 +717,7 @@ const S = StyleSheet.create({
     marginTop: 16,
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 22, paddingVertical: 11,
-    borderRadius: 22, backgroundColor: '#3b82f6',
+    borderRadius: 22, backgroundColor: '#6C5CFF',
   },
   retryText: { color: '#fff', fontWeight: '800', fontSize: 14, marginLeft: 6 },
 });

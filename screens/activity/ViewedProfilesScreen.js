@@ -8,7 +8,7 @@
 
 import { useCallback, useState } from 'react';
 import {
-  ActivityIndicator, Alert, FlatList, Image, RefreshControl,
+  ActivityIndicator, FlatList, Image, RefreshControl,
   StatusBar, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +16,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../../components/settings/ScreenHeader';
 import { useTheme } from '../../context/ThemeContext';
+import { useProfileNavigation } from '../../utils/profileNavigation';
+import { useConfirm } from '../../components/common/ConfirmProvider';
 import activityService from '../../services/ActivityService';
 
 const timeAgo = (date) => {
@@ -34,6 +36,8 @@ const initials = (name = '?') =>
 export default function ViewedProfilesScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const openProfile = useProfileNavigation();
+  const confirm = useConfirm();
 
   const [items, setItems]         = useState([]);
   const [page, setPage]           = useState(1);
@@ -65,22 +69,18 @@ export default function ViewedProfilesScreen({ navigation }) {
     load(page + 1);
   };
 
-  const clearAll = () => {
+  const clearAll = async () => {
     if (items.length === 0) return;
-    Alert.alert(
-      'Clear recently viewed',
-      "Remove every profile from your recently-viewed list?",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear all', style: 'destructive',
-          onPress: async () => {
-            await activityService.clearProfileViews();
-            setItems([]); setPage(1); setHasMore(false);
-          },
-        },
-      ],
-    );
+    const ok = await confirm({
+      title:       'Clear recently viewed',
+      message:     'Remove every profile from your recently-viewed list?',
+      confirmText: 'Clear all',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    await activityService.clearProfileViews();
+    setItems([]); setPage(1); setHasMore(false);
   };
 
   const removeOne = (profileId) => {
@@ -92,7 +92,7 @@ export default function ViewedProfilesScreen({ navigation }) {
     const u = item.profile;
     return (
       <TouchableOpacity
-        onPress={() => navigation.navigate('UserProfile', { userId: u._id })}
+        onPress={() => openProfile(u._id)}
         activeOpacity={0.7}
         style={[S.row, { borderBottomColor: colors.divider }]}
       >

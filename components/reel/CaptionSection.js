@@ -42,6 +42,7 @@ export default function CaptionSection({
   // non-tappable "Requested" chip (private account, approval pending).
   followStatus,
   onFollow,
+  onUsernamePress,   // tap the @username → open the creator's profile
   isVerified,
   style,
 }) {
@@ -62,10 +63,18 @@ export default function CaptionSection({
     <View style={[S.wrap, style]}>
       {/* Username + Follow */}
       <View style={S.userRow}>
-        <Text style={S.username}>@{username}</Text>
-        {isVerified && (
-          <Ionicons name="checkmark-circle" size={14} color="#3b82f6" style={{ marginLeft: 4 }} />
-        )}
+        <TouchableOpacity
+          onPress={onUsernamePress}
+          disabled={!onUsernamePress}
+          activeOpacity={0.7}
+          hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+          style={S.userTap}
+        >
+          <Text style={S.username}>@{username}</Text>
+          {isVerified && (
+            <Ionicons name="checkmark-circle" size={14} color="#3b82f6" style={{ marginLeft: 4 }} />
+          )}
+        </TouchableOpacity>
         {followStatus === 'requested' ? (
           <View style={[S.followBtn, S.requestedBtn]}>
             <Text style={[S.followText, S.requestedText]}>Requested</Text>
@@ -103,6 +112,7 @@ const S = StyleSheet.create({
   userRow: {
     flexDirection: 'row', alignItems: 'center', marginBottom: 8,
   },
+  userTap: { flexDirection: 'row', alignItems: 'center' },
   username: {
     color: '#fff', fontWeight: '800', fontSize: 15,
     textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 3,

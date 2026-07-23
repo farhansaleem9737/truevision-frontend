@@ -9,45 +9,52 @@
 //   • `unregisterPushNotifications(token)` — called on logout so a shared
 //     device doesn't page the previous account.
 //
-// Optional dep: expo-notifications. If not installed, every helper is a
-// safe no-op so the app keeps working without notifications.
+// ── FEATURE-FLAGGED ───────────────────────────────────────────────────────────
+// Every entry point below is gated on `NotificationConfig.enabled`
+// (see constants/notifications.js). While push is disabled (development / Expo
+// Go) each helper is a safe no-op and `expo-notifications` is NEVER required —
+// which is what actually silences the "removed from Expo Go" startup error,
+// since that warning fires the moment the module loads inside Expo Go.
+//
+// To re-enable for a dev/prod build: flip ENABLE_PUSH_NOTIFICATIONS → true in
+// constants/notifications.js. No change is needed in this file.
 
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import chatService from './ChatService';
+import { NotificationConfig } from '../constants/notifications';
 
+// ── Lazy native-module loader ─────────────────────────────────────────────────
+// We intentionally do NOT `require('expo-notifications')` at module top level.
+// Loading that module inside Expo Go is what prints the red "remote push was
+// removed from Expo Go" banner. By requiring it only from within the guarded
+// functions below — which return early when push is disabled — the module is
+// never touched during development, so the error can never appear.
 let Notifications = null;
 let Device        = null;
-try {
-  // eslint-disable-next-line import/no-unresolved
-  Notifications = require('expo-notifications');
-} catch (_) { /* optional */ }
-try {
-  // eslint-disable-next-line import/no-unresolved
-  Device = require('expo-device');
-} catch (_) { /* optional */ }
+let modulesLoaded = false;
 
-// ── Expo Go detection ────────────────────────────────────────────────────────
-// Remote push was REMOVED from Expo Go in SDK 53+. Calling
-// getExpoPushTokenAsync() there throws:
-//   "Android Push notifications ... was removed from Expo Go ... use a
-//    development build instead."
-// `executionEnvironment === 'storeClient'` is the canonical Expo Go signal
-// (with the legacy `appOwnership === 'expo'` fallback for older runtimes).
-// In Expo Go we skip REMOTE token registration but keep permissions + LOCAL
-// notifications working, so nothing crashes and no scary error is logged.
-const IS_EXPO_GO =
-  Constants.executionEnvironment === 'storeClient' ||
-  Constants.appOwnership === 'expo';
+const loadNativeModules = () => {
+  if (modulesLoaded) return;
+  modulesLoaded = true;
+  try {
+    // eslint-disable-next-line import/no-unresolved
+    Notifications = require('expo-notifications');
+  } catch (_) { /* optional dep — stays null, helpers no-op */ }
+  try {
+    // eslint-disable-next-line import/no-unresolved
+    Device = require('expo-device');
+  } catch (_) { /* optional */ }
+};
 
 /** Whether this runtime can register a remote push token (dev build / prod). */
-export const canUseRemotePush = () => !!Notifications && !IS_EXPO_GO;
+export const canUseRemotePush = () => NotificationConfig.enabled;
 
 // Cache the last registered token so we don't re-hit the backend on every
 // AuthContext render.
 let lastRegisteredToken = null;
 
-/** Configure the default handler + Android channel. Idempotent. */
+/** Configure the default handler + Android channels. Idempotent. */
 const configureNotifications = () => {
   if (!Notifications) return;
 
@@ -90,20 +97,15 @@ const configureNotifications = () => {
 
 /** Ask permission, fetch the Expo push token, POST to backend. Returns the token or null. */
 export const registerForPushNotifications = async () => {
+  // Feature flag OFF (development / Expo Go): bypass registration entirely.
+  // No permission dialog, no channels, no token, no backend call — and
+  // crucially, expo-notifications is never loaded. Flip
+  // ENABLE_PUSH_NOTIFICATIONS in constants/notifications.js to enable.
+  if (!NotificationConfig.enabled) return null;
+
+  loadNativeModules();
   if (!Notifications) {
     console.warn('[push] expo-notifications not installed — skipping.');
-    return null;
-  }
-
-  // Expo Go (SDK 53+): remote push is unavailable. Configure local
-  // notification channels + permissions so in-app/local notifications still
-  // work, but DO NOT attempt remote token registration (it would throw the
-  // "removed from Expo Go" error). Use a development build for remote push.
-  if (IS_EXPO_GO) {
-    configureNotifications();
-    try { await Notifications.getPermissionsAsync(); } catch (_) {}
-    console.log('[push] Expo Go detected — skipping remote push registration. ' +
-      'Local notifications still work; use a dev build for push.');
     return null;
   }
 
@@ -147,6 +149,8 @@ export const registerForPushNotifications = async () => {
 
 /** Unregister on logout so a shared device doesn't page a signed-out user. */
 export const unregisterPushNotifications = async () => {
+  if (!NotificationConfig.enabled) return;
+  loadNativeModules();
   if (!Notifications || !lastRegisteredToken) return;
   try {
     await chatService.unregisterPushToken(lastRegisteredToken, 'expo');
@@ -159,6 +163,8 @@ export const unregisterPushNotifications = async () => {
  *  the backend fills with { chatId, senderId, messageId, type } for taps
  *  to deep-link into the correct chat. */
 export const onNotificationTap = (handler) => {
+  if (!NotificationConfig.enabled) return () => {};
+  loadNativeModules();
   if (!Notifications) return () => {};
   const sub = Notifications.addNotificationResponseReceivedListener((response) => {
     handler(response?.notification?.request?.content?.data || {});
@@ -168,6 +174,8 @@ export const onNotificationTap = (handler) => {
 
 /** Subscribe to foreground-received events (already-focused screen). */
 export const onNotificationReceived = (handler) => {
+  if (!NotificationConfig.enabled) return () => {};
+  loadNativeModules();
   if (!Notifications) return () => {};
   const sub = Notifications.addNotificationReceivedListener((notification) => {
     handler(notification?.request?.content?.data || {});

@@ -4,7 +4,8 @@
 // Contact Us, Report a Problem, Terms and Privacy (shared with the About
 // module). Theme-aware; also surfaces "My Requests" so users can track tickets.
 
-import { ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { useRef } from 'react';
+import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ScreenHeader from '../components/settings/ScreenHeader';
 import { Section, SettingsRow } from '../components/settings/SettingsRow';
@@ -14,6 +15,20 @@ import { APP_VERSION } from '../utils/diagnostics';
 export default function HelpSupportScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+
+  // Hidden admin gate: 7 quick taps on the version string opens the admin login
+  // (concealed — never linked in normal UI).
+  const tapCount = useRef(0);
+  const tapTimer = useRef(null);
+  const onVersionTap = () => {
+    tapCount.current += 1;
+    clearTimeout(tapTimer.current);
+    tapTimer.current = setTimeout(() => { tapCount.current = 0; }, 1500);
+    if (tapCount.current >= 7) {
+      tapCount.current = 0;
+      navigation.navigate('AdminLogin');
+    }
+  };
 
   return (
     <View style={[S.root, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
@@ -49,6 +64,15 @@ export default function HelpSupportScreen({ navigation }) {
           />
         </Section>
 
+        <Section title="Your content">
+          <SettingsRow
+            icon="shield-checkmark-outline" label="Uploads under review"
+            sub="Blocked or pending videos + request a review"
+            onPress={() => navigation.navigate('MyReviews')}
+            last
+          />
+        </Section>
+
         <Section title="Legal">
           <SettingsRow
             icon="document-text-outline" label="Terms & Conditions"
@@ -61,7 +85,9 @@ export default function HelpSupportScreen({ navigation }) {
           />
         </Section>
 
-        <Text style={[S.version, { color: colors.textDim }]}>TrueVision v{APP_VERSION}</Text>
+        <TouchableOpacity activeOpacity={1} onPress={onVersionTap}>
+          <Text style={[S.version, { color: colors.textDim }]}>TrueVision v{APP_VERSION}</Text>
+        </TouchableOpacity>
       </ScrollView>
     </View>
   );

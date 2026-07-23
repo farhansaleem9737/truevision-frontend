@@ -16,6 +16,7 @@ import AsyncStorage          from '@react-native-async-storage/async-storage';
 import * as FileSystem       from 'expo-file-system';
 import { Ionicons }          from '@expo/vector-icons';
 import ScreenHeader          from '../components/settings/ScreenHeader';
+import { useConfirm }        from '../components/common/ConfirmProvider';
 
 const KEY = '@truevision:downloads';
 
@@ -53,6 +54,7 @@ export const recordDownload = async (entry) => {
 
 export default function DownloadHistoryScreen({ navigation }) {
   const insets = useSafeAreaInsets();
+  const confirm = useConfirm();
   const [items, setItems]     = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -79,15 +81,18 @@ export default function DownloadHistoryScreen({ navigation }) {
   const onRefresh = () => { setRefreshing(true); load(); };
 
   const removeOne = async (entry) => {
-    Alert.alert('Remove download', `Delete "${entry.title || 'this video'}" from your device?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-        try { await FileSystem.deleteAsync(entry.uri, { idempotent: true }); } catch {}
-        const next = items.filter((it) => it.uri !== entry.uri);
-        setItems(next);
-        await saveAll(next);
-      }},
-    ]);
+    const ok = await confirm({
+      title:       'Remove download',
+      message:     `Delete "${entry.title || 'this video'}" from your device?`,
+      confirmText: 'Delete',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    try { await FileSystem.deleteAsync(entry.uri, { idempotent: true }); } catch {}
+    const next = items.filter((it) => it.uri !== entry.uri);
+    setItems(next);
+    await saveAll(next);
   };
 
   const reshare = async (entry) => {
@@ -96,18 +101,21 @@ export default function DownloadHistoryScreen({ navigation }) {
     } catch {}
   };
 
-  const clearAll = () => {
+  const clearAll = async () => {
     if (!items.length) return;
-    Alert.alert('Clear history', 'Delete all downloaded videos from your device?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete all', style: 'destructive', onPress: async () => {
-        for (const e of items) {
-          try { await FileSystem.deleteAsync(e.uri, { idempotent: true }); } catch {}
-        }
-        setItems([]);
-        await saveAll([]);
-      }},
-    ]);
+    const ok = await confirm({
+      title:       'Clear history',
+      message:     'Delete all downloaded videos from your device?',
+      confirmText: 'Delete all',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    for (const e of items) {
+      try { await FileSystem.deleteAsync(e.uri, { idempotent: true }); } catch {}
+    }
+    setItems([]);
+    await saveAll([]);
   };
 
   return (

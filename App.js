@@ -6,6 +6,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider }          from './context/ThemeContext';
 import { LanguageProvider }       from './context/LanguageContext';
+import { CallProvider }           from './context/CallProvider';
+import { ConfirmProvider }        from './components/common/ConfirmProvider';
 
 // Initialise i18next before any screen mounts (English is bundled; other
 // languages lazy-load). Also allow RTL so LanguageProvider can flip direction.
@@ -51,6 +53,14 @@ import TwoFactorLoginScreen     from './screens/TwoFactorLoginScreen';
 import SavedVideosScreen        from './screens/SavedVideosScreen';
 import DownloadHistoryScreen    from './screens/DownloadHistoryScreen';
 import NotificationSettingsScreen from './screens/NotificationSettingsScreen';
+// AI Moderation — creator screens
+import MyReviewsScreen from './screens/moderation/MyReviewsScreen';
+import UploadReviewScreen from './screens/moderation/UploadReviewScreen';
+import RequestReviewScreen from './screens/moderation/RequestReviewScreen';
+// Hidden admin moderation panel
+import AdminLoginScreen from './screens/admin/AdminLoginScreen';
+import AdminDashboardScreen from './screens/admin/AdminDashboardScreen';
+import AdminReviewDetailScreen from './screens/admin/AdminReviewDetailScreen';
 import LanguageScreen           from './screens/LanguageScreen';
 import ContentPreferencesScreen from './screens/ContentPreferencesScreen';
 import InterestedTopicsScreen   from './screens/InterestedTopicsScreen';
@@ -80,6 +90,7 @@ function AuthStack() {
       screenOptions={{
         headerShown: false,
         animation: 'slide_from_right',
+        animationDuration: 240,
       }}
     >
       <Stack.Screen name="Splash" component={SplashScreen} />
@@ -100,6 +111,11 @@ function AppStack() {
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
+        // Consistent, quick default transition for every pushed screen.
+        // Per-screen options below still override where a screen wants a
+        // different presentation (e.g. slide_from_bottom modals).
+        animation: 'slide_from_right',
+        animationDuration: 240,
       }}
     >
       {/* Main Bottom Tab Navigator */}
@@ -225,6 +241,14 @@ function AppStack() {
       <Stack.Screen name="ContactUs"            component={ContactUsScreen}            options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="ReportProblem"        component={ReportProblemScreen}        options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="MyTickets"            component={MyTicketsScreen}            options={{ animation: 'slide_from_right' }} />
+      {/* AI Moderation — creator-facing */}
+      <Stack.Screen name="MyReviews"            component={MyReviewsScreen}            options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="UploadReview"         component={UploadReviewScreen}         options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="RequestReview"        component={RequestReviewScreen}        options={{ animation: 'slide_from_right' }} />
+      {/* Hidden admin moderation panel (admin-only; not linked in normal UI) */}
+      <Stack.Screen name="AdminLogin"           component={AdminLoginScreen}           options={{ animation: 'fade' }} />
+      <Stack.Screen name="AdminDashboard"       component={AdminDashboardScreen}       options={{ animation: 'fade', gestureEnabled: false }} />
+      <Stack.Screen name="AdminReviewDetail"    component={AdminReviewDetailScreen}    options={{ animation: 'slide_from_right' }} />
     </Stack.Navigator>
   );
 }
@@ -250,9 +274,18 @@ export default function App() {
               account's language on login, and outside the navigator so a
               language change re-renders every screen. */}
           <LanguageProvider>
-            <NavigationContainer>
-              <RootNavigator />
-            </NavigationContainer>
+            {/* CallProvider renders the full-screen call overlay above the
+                navigator and binds the WebRTC signalling listeners. */}
+            <CallProvider>
+              {/* App-wide themed confirmation dialogs (replaces Alert.alert
+                  for user-facing confirmations). Inside the navigator tree so
+                  useConfirm() is reachable from every screen. */}
+              <ConfirmProvider>
+                <NavigationContainer>
+                  <RootNavigator />
+                </NavigationContainer>
+              </ConfirmProvider>
+            </CallProvider>
           </LanguageProvider>
         </AuthProvider>
       </ThemeProvider>

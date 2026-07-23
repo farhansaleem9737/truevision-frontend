@@ -15,8 +15,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import ScreenHeader from '../components/settings/ScreenHeader';
+import FadeInView from '../components/common/FadeInView';
 import securityService from '../services/SecurityService';
 import { useTheme } from '../context/ThemeContext';
+import { useConfirm } from '../components/common/ConfirmProvider';
 
 const iconForOS = (os = '') => {
   const s = os.toLowerCase();
@@ -50,6 +52,7 @@ const SkeletonRow = ({ colors }) => (
 export default function LoginActivityScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
+  const confirm = useConfirm();
 
   const [sessions,   setSessions]   = useState([]);
   const [page,       setPage]       = useState(1);
@@ -92,27 +95,23 @@ export default function LoginActivityScreen({ navigation }) {
     if (!loading && !refreshing && hasMore && !inFlight.current) load(page + 1);
   }, [loading, refreshing, hasMore, page, load]);
 
-  const removeSession = (session) => {
-    Alert.alert(
-      'Remove from history',
-      'This removes the entry from your login activity. It does not sign that device out.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove', style: 'destructive',
-          onPress: async () => {
-            setRemoving(session.id);
-            const res = await securityService.deleteSession(session.id);
-            setRemoving(null);
-            if (res.success) {
-              setSessions((prev) => prev.filter((s) => s.id !== session.id));
-            } else {
-              Alert.alert('Could not remove', res.message || 'Try again later');
-            }
-          },
-        },
-      ],
-    );
+  const removeSession = async (session) => {
+    const ok = await confirm({
+      title:       'Remove from history',
+      message:     'This removes the entry from your login activity. It does not sign that device out.',
+      confirmText: 'Remove',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (!ok) return;
+    setRemoving(session.id);
+    const res = await securityService.deleteSession(session.id);
+    setRemoving(null);
+    if (res.success) {
+      setSessions((prev) => prev.filter((s) => s.id !== session.id));
+    } else {
+      Alert.alert('Could not remove', res.message || 'Try again later');
+    }
   };
 
   const renderItem = ({ item }) => {
@@ -174,7 +173,7 @@ export default function LoginActivityScreen({ navigation }) {
           {[0, 1, 2, 3].map((i) => <SkeletonRow key={i} colors={colors} />)}
         </View>
       ) : error && sessions.length === 0 ? (
-        <View style={S.stateBox}>
+        <FadeInView style={S.stateBox}>
           <Ionicons name="cloud-offline-outline" size={40} color={colors.textMuted} />
           <Text style={[S.stateTitle, { color: colors.text }]}>Couldn't load activity</Text>
           <Text style={[S.stateBody,  { color: colors.textMuted }]}>{error}</Text>
@@ -184,15 +183,15 @@ export default function LoginActivityScreen({ navigation }) {
           >
             <Text style={S.retryText}>Retry</Text>
           </TouchableOpacity>
-        </View>
+        </FadeInView>
       ) : sessions.length === 0 ? (
-        <View style={S.stateBox}>
+        <FadeInView style={S.stateBox}>
           <Ionicons name="laptop-outline" size={40} color={colors.textMuted} />
           <Text style={[S.stateTitle, { color: colors.text }]}>No login activity yet</Text>
           <Text style={[S.stateBody,  { color: colors.textMuted }]}>
             New sign-ins will appear here with device and location details.
           </Text>
-        </View>
+        </FadeInView>
       ) : (
         <FlatList
           data={sessions}

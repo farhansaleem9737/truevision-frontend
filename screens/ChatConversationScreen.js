@@ -52,15 +52,22 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker    from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics        from 'expo-haptics';
+// TODO (Expo SDK 55+): migrate `expo-av` Audio → `expo-audio` (useAudioPlayer /
+// createAudioPlayer). expo-av is deprecated but fully functional on SDK 53/54;
+// keep it until the SDK upgrade to avoid a mid-development regression.
 import { Audio } from 'expo-av';
 
 import { useAuth }   from '../context/AuthContext';
+import { useProfileNavigation } from '../utils/profileNavigation';
 import { useTheme }  from '../context/ThemeContext';
 import chatService   from '../services/ChatService';
+import userService   from '../services/UserService';
 import socketService from '../services/SocketService';
+import callService   from '../services/CallService';
 import ImageViewer      from '../components/chat/ImageViewer';
 import VoiceRecorder    from '../components/chat/VoiceRecorder';
 import AttachmentSheet  from '../components/chat/AttachmentSheet';
+import ActionSheet      from '../components/ui/ActionSheet';
 
 // Optional emoji picker — resolved dynamically so the app still boots even
 // if the dep isn't installed. When missing, the emoji button is hidden.
@@ -135,45 +142,59 @@ const palette = (dark) => dark ? {
 // then subtract whatever the host View was already shrunk by.
 //
 // iOS uses KeyboardAvoidingView, so this hook returns 0 there.
+// Remembered keyboard height (module-level, survives screen remounts). Samsung
+// keyboards keep a stable height across opens, so after the FIRST open every
+// later focus can lift the composer INSTANTLY — no waiting for the late
+// Android `keyboardDidShow` event and no percentage guessing.
+let LAST_KNOWN_KB_HEIGHT = 0;
+// How much of the keyboard the OS itself absorbed via window resize last time
+// (adjustResize devices ≈ full height; broken Samsung paths ≈ 0). Subtracting
+// it from the instant focus estimate prevents an up-then-down bounce on
+// devices where the native resize does the lifting.
+let LAST_KNOWN_HOST_SHRINK = 0;
+
 function useAndroidKeyboardPadding(safeBottom) {
   const [kbEventH,     setKbEventH]     = useState(0);
   const [hostHeight,   setHostHeight]   = useState(0);
   const [focused,      setFocused]      = useState(false);
-  const [focusFallback,setFocusFallback]= useState(0);
 
-  const winH = useWindowDimensions().height;
+  const { height: winH, width: winW } = useWindowDimensions();
   const initialWinH  = useRef(0);
-  if (winH > initialWinH.current) initialWinH.current = winH;
   const initialHostH = useRef(0);
-  const focusTimer   = useRef(null);
+  const lastWinW     = useRef(winW);
+  // A width change (split-screen, foldable posture) invalidates the high-water
+  // marks — reset them so a smaller window is never mistaken for a keyboard.
+  if (winW !== lastWinW.current) {
+    lastWinW.current = winW;
+    initialWinH.current = 0;
+    initialHostH.current = 0;
+  }
+  if (winH > initialWinH.current) initialWinH.current = winH;
+
+  // The pad is an Animated.Value driven imperatively: keyboard motion never
+  // re-renders the screen (only the padded Animated.View updates), and every
+  // change eases over ~160 ms — smooth WhatsApp-style motion, no jumps.
+  const padAnim   = useRef(new Animated.Value(Platform.OS === 'android' ? safeBottom : 0)).current;
+  const lastPad   = useRef(Platform.OS === 'android' ? safeBottom : 0);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    const apply = (e) => setKbEventH(e?.endCoordinates?.height || 0);
+    const apply = (e) => {
+      const h = e?.endCoordinates?.height || 0;
+      if (h > 0) LAST_KNOWN_KB_HEIGHT = h;     // remember for instant next-time lift
+      setKbEventH(h);
+    };
     const subs = [
       Keyboard.addListener('keyboardDidShow',        apply),
       Keyboard.addListener('keyboardDidChangeFrame', apply),
-      Keyboard.addListener('keyboardDidHide',        () => setKbEventH(0)),
+      // Android's back button / nav down-chevron hides the IME WITHOUT blurring
+      // the TextInput — onBlur never fires. A hidden keyboard must also clear
+      // `focused`, or the focus-estimate would keep a keyboard-sized blank gap
+      // lifted under the composer.
+      Keyboard.addListener('keyboardDidHide',        () => { setKbEventH(0); setFocused(false); }),
     ];
     return () => subs.forEach((s) => s.remove());
   }, []);
-
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    clearTimeout(focusTimer.current);
-    if (focused) {
-      focusTimer.current = setTimeout(() => {
-        setFocusFallback(Math.round(winH * 0.45));
-      }, 350);
-    } else {
-      setFocusFallback(0);
-    }
-    return () => clearTimeout(focusTimer.current);
-  }, [focused, winH]);
-
-  useEffect(() => {
-    if (kbEventH > 0 && focusFallback > 0) setFocusFallback(0);
-  }, [kbEventH, focusFallback]);
 
   const onHostLayout = useCallback((e) => {
     const h = e.nativeEvent.layout.height;
@@ -181,20 +202,56 @@ function useAndroidKeyboardPadding(safeBottom) {
     setHostHeight(h);
   }, []);
 
+  // While the keyboard is genuinely up, remember how much the OS shrank the
+  // host — this calibrates the instant focus estimate for the NEXT open.
+  useEffect(() => {
+    if (Platform.OS !== 'android' || kbEventH <= 0) return;
+    LAST_KNOWN_HOST_SHRINK = Math.max(0, initialHostH.current - hostHeight);
+  }, [kbEventH, hostHeight]);
+
   const onInputFocus = useCallback(() => setFocused(true),  []);
   const onInputBlur  = useCallback(() => setFocused(false), []);
 
-  let bottomPad;
+  // ── Target pad computation (Android) ─────────────────────────────────────
+  // Invariant: total lift = native window/host shrink + our pad = keyboard
+  // height. Whatever portion Samsung's resize actually applies (full, partial,
+  // or none), hostShrink measures it and the pad covers exactly the remainder.
+  let target;
   if (Platform.OS !== 'android') {
-    bottomPad = 0;
+    target = 0;                                  // iOS: KeyboardAvoidingView handles it
   } else {
-    const winShrink  = Math.max(0, initialWinH.current  - winH);
+    // Window/host shrink only counts as a keyboard signal while an input is
+    // focused or the IME reported itself — otherwise split-screen / foldable
+    // window changes would masquerade as a keyboard and add a phantom pad.
+    const kbActive   = focused || kbEventH > 0;
+    const winShrink  = kbActive ? Math.max(0, initialWinH.current - winH) : 0;
     const hostShrink = Math.max(0, initialHostH.current - hostHeight);
-    const kbHeight   = Math.max(kbEventH, winShrink, focusFallback);
-    bottomPad = kbHeight === 0 ? safeBottom : Math.max(0, kbHeight - hostShrink);
+    // Instant focus estimate: last real keyboard height MINUS the portion the
+    // OS historically absorbed via resize — so adjustResize devices don't get
+    // an up-then-down bounce, and broken-resize Samsungs get the full lift.
+    const focusEstimate = focused
+      ? Math.max(0, (LAST_KNOWN_KB_HEIGHT || Math.round(winH * 0.4)) - LAST_KNOWN_HOST_SHRINK)
+      : 0;
+    const kbHeight = Math.max(kbEventH, winShrink, focusEstimate);
+    target = kbHeight === 0 ? safeBottom : Math.max(0, kbHeight - hostShrink);
   }
 
-  return { bottomPad, onHostLayout, onInputFocus, onInputBlur };
+  // Drive the animation only when the target actually changes.
+  useEffect(() => {
+    if (target === lastPad.current) return;
+    lastPad.current = target;
+    Animated.timing(padAnim, {
+      toValue: target,
+      duration: 160,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,                    // padding is a layout prop
+    }).start();
+  }, [target, padAnim]);
+
+  // `keyboardVisible` lets the screen react (e.g. keep newest message pinned).
+  const keyboardVisible = Platform.OS === 'android' ? (kbEventH > 0 || focused) : false;
+
+  return { padAnim, keyboardVisible, onHostLayout, onInputFocus, onInputBlur };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -528,13 +585,21 @@ function VoiceMessageBubble({ msg, isMine, ct }) {
 //      cached failure. Appending ?cb=N forces a fresh network fetch.
 //   4. recyclingKey — tells expo-image which cached entry belongs to this row
 //      during list recycling, preventing flashes of the wrong/failed image.
-//   5. GRACEFUL PLACEHOLDER for non-http (legacy file://) URLs that can never
-//      load — no pointless retry loop.
-const MAX_AUTO_RETRIES = 2;
+//   5. LOCAL PREVIEW SUPPORT — an optimistic just-sent photo carries a local
+//      file:// (or content://, ph://, data:) uri before the Cloudinary URL
+//      swaps in. expo-image renders those natively, so we must NOT flash
+//      "Photo unavailable" for them; only a missing/unsupported uri is
+//      genuinely unavailable. (Delivered messages always carry a permanent
+//      https Cloudinary secure_url — the backend rejects file:// on write —
+//      so remote URLs never expire and never need refreshing.)
+const MAX_AUTO_RETRIES = 3;
+const REMOTE_RE = /^https?:\/\//i;
+const RENDERABLE_RE = /^(https?:|file:|content:|ph:|assets-library:|data:)/i;
 
 function ImageMessageBubble({ uri, onPress }) {
-  const isRemote = /^https?:\/\//i.test(uri || '');
-  const [state, setState]   = useState(isRemote ? 'loading' : 'unavailable'); // loading|ok|error|unavailable
+  const isRemote   = REMOTE_RE.test(uri || '');
+  const canRender  = RENDERABLE_RE.test(uri || '');
+  const [state, setState]   = useState(canRender ? 'loading' : 'unavailable'); // loading|ok|error|unavailable
   const [attempt, setAttempt] = useState(0);
   const shimmer = useRef(new Animated.Value(0)).current;
   const autoRetries = useRef(0);
@@ -544,9 +609,9 @@ function ImageMessageBubble({ uri, onPress }) {
   useEffect(() => {
     autoRetries.current = 0;
     setAttempt(0);
-    setState(isRemote ? 'loading' : 'unavailable');
+    setState(canRender ? 'loading' : 'unavailable');
     return () => clearTimeout(retryTimer.current);
-  }, [uri, isRemote]);
+  }, [uri, canRender]);
 
   // Shimmer loop — only while loading to save cycles.
   useEffect(() => {
@@ -582,7 +647,9 @@ function ImageMessageBubble({ uri, onPress }) {
   };
 
   // Cache-bust after the first failure so we bypass any negative cache entry.
-  const source = attempt > 0
+  // Only for remote http(s) URLs — appending a query to a local file:// path
+  // would make it unresolvable.
+  const source = (attempt > 0 && isRemote)
     ? { uri: `${uri}${uri.includes('?') ? '&' : '?'}cb=${attempt}` }
     : { uri };
 
@@ -715,6 +782,17 @@ const MessageBubble = memo(function MessageBubble({
   const timeColor = isMine ? 'rgba(255,255,255,0.70)' : ct.dim;
   const isForwarded = !!msg.forwardedFrom;
 
+  // A "media-only" message (image/gif/video with no caption, reply or forward
+  // tag) gets a lightweight bubble: a thin 3px inset instead of the chunky
+  // 12/8 padding that otherwise renders as a thick blue frame around the
+  // photo, plus a minimal shadow. Pure image/gif additionally float their
+  // timestamp as an overlay pill so no coloured strip sits below the picture.
+  const isPureImage = !msg.deleted && !msg.text && !msg.replyTo && !isForwarded && !msg.pinned
+    && ((msg.type === 'image' && msg.imageUrl) || (msg.type === 'gif' && msg.gifUrl));
+  const isPureVideo = !msg.deleted && !msg.text && !msg.replyTo && !isForwarded
+    && msg.type === 'video' && msg.videoId;
+  const mediaOnly = isPureImage || isPureVideo;
+
   const renderText = () => {
     if (!msg.text) return null;
     const q = (searchQuery || '').trim();
@@ -768,18 +846,27 @@ const MessageBubble = memo(function MessageBubble({
         </>
       )}
 
-      <View style={S.msgFoot}>
-        {msg.edited && !msg.deleted && <EditedTag color={timeColor} />}
-        {msg.pinned && !msg.deleted && (
-          <Ionicons name="pin" size={11} color={timeColor}
-            style={{ marginRight: 4, transform: [{ rotate: '45deg' }] }} />
-        )}
-        {(msg.starredBy || []).some((u) => (u?._id || u)?.toString?.() === myId?.toString?.()) && (
-          <Ionicons name="star" size={11} color={timeColor} style={{ marginRight: 4 }} />
-        )}
-        <Text style={[S.msgTime, { color: timeColor }]}>{formatTime(msg.createdAt)}</Text>
-        {isMine && !msg.deleted && <StatusTick status={deriveStatus(msg)} ct={ct} />}
-      </View>
+      {/* Pure image/gif: timestamp + tick float over the picture on a subtle
+          scrim, so there's no coloured footer strip below it. */}
+      {isPureImage ? (
+        <View style={S.mediaFoot} pointerEvents="none">
+          <Text style={S.mediaFootTime}>{formatTime(msg.createdAt)}</Text>
+          {isMine && <StatusTick status={deriveStatus(msg)} ct={ct} />}
+        </View>
+      ) : (
+        <View style={S.msgFoot}>
+          {msg.edited && !msg.deleted && <EditedTag color={timeColor} />}
+          {msg.pinned && !msg.deleted && (
+            <Ionicons name="pin" size={11} color={timeColor}
+              style={{ marginRight: 4, transform: [{ rotate: '45deg' }] }} />
+          )}
+          {(msg.starredBy || []).some((u) => (u?._id || u)?.toString?.() === myId?.toString?.()) && (
+            <Ionicons name="star" size={11} color={timeColor} style={{ marginRight: 4 }} />
+          )}
+          <Text style={[S.msgTime, { color: timeColor }]}>{formatTime(msg.createdAt)}</Text>
+          {isMine && !msg.deleted && <StatusTick status={deriveStatus(msg)} ct={ct} />}
+        </View>
+      )}
     </>
   );
 
@@ -809,7 +896,7 @@ const MessageBubble = memo(function MessageBubble({
             <LinearGradient
               colors={ct.outgoing}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-              style={[S.bubble, isFirstInGroup ? S.bubbleMineFirst : S.bubbleMineCont]}
+              style={[S.bubble, isFirstInGroup ? S.bubbleMineFirst : S.bubbleMineCont, mediaOnly && S.bubbleMedia]}
             >
               {body}
             </LinearGradient>
@@ -817,6 +904,7 @@ const MessageBubble = memo(function MessageBubble({
             <View style={[
               S.bubble,
               isFirstInGroup ? S.bubbleTheirsFirst : S.bubbleTheirsCont,
+              mediaOnly && S.bubbleMedia,
               { backgroundColor: ct.incoming, borderColor: ct.border },
             ]}>
               {body}
@@ -898,6 +986,7 @@ export default function ChatConversationScreen({ route, navigation }) {
   const { isDark }    = useTheme();
   const ct            = palette(isDark);
   const insets        = useSafeAreaInsets();
+  const goToProfile   = useProfileNavigation();
   const kb            = useAndroidKeyboardPadding(insets.bottom);
 
   // ── Chat state ─────────────────────────────────────────────────────────
@@ -909,6 +998,8 @@ export default function ChatConversationScreen({ route, navigation }) {
   const [hasMore,     setHasMore]     = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [typing,      setTyping]      = useState(false);
+  const [recording,   setRecording]   = useState(false); // peer is recording a voice note
+  const recordingTimer = useRef(null);
   const [isOnline,    setIsOnline]    = useState(!!otherUser?.isOnline);
   const [lastSeen,    setLastSeen]    = useState(otherUser?.lastSeen || null);
   const [showScrollDown, setShowScrollDown] = useState(false);
@@ -926,6 +1017,15 @@ export default function ChatConversationScreen({ route, navigation }) {
   const [emojiOpen,    setEmojiOpen]    = useState(false);
   const [caret,        setCaret]        = useState({ start: 0, end: 0 });
 
+  // ── Chat options bottom sheet (replaces the old Alert menu) ──────────────
+  const [menuOpen,     setMenuOpen]     = useState(false);
+  const [confirm,      setConfirm]      = useState(null);   // { title, sublabel, actionLabel, onConfirm }
+  const [blocked,      setBlocked]      = useState(null);   // null=unknown, bool once fetched
+  const [muteOpen,     setMuteOpen]     = useState(false);  // mute-duration picker sheet
+  const [reportOpen,   setReportOpen]   = useState(false);  // report-reason picker sheet
+  const [toast,        setToast]        = useState(null);   // { text, actionLabel?, onAction? }
+  const toastTimer     = useRef(null);
+
   // ── In-chat search ─────────────────────────────────────────────────────
   const [searchOpen,   setSearchOpen]   = useState(false);
   const [searchQuery,  setSearchQuery]  = useState('');
@@ -942,6 +1042,20 @@ export default function ChatConversationScreen({ route, navigation }) {
 
   // ── Refs ────────────────────────────────────────────────────────────────
   const flatListRef = useRef(null);
+  const scrollOffsetRef = useRef(0);   // live list offset (0 = newest, inverted)
+
+  // When the keyboard opens and the user was already at/near the newest
+  // message, keep it pinned above the keyboard: after the pad animation
+  // settles (~160 ms) snap back to offset 0. Users reading older history
+  // (offset ≥ 120) are left exactly where they are.
+  useEffect(() => {
+    if (!kb.keyboardVisible) return;
+    if (scrollOffsetRef.current >= 120) return;
+    const t = setTimeout(() => {
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    }, 190);
+    return () => clearTimeout(t);
+  }, [kb.keyboardVisible]);
   const inputRef    = useRef(null);
   const typingTimer = useRef(null);
 
@@ -1021,6 +1135,18 @@ export default function ChatConversationScreen({ route, navigation }) {
       }),
       socketService.on('typing',     ({ chatId: c, userId: u }) => { if (c === chatId && u !== me?._id) setTyping(true);  }),
       socketService.on('stopTyping', ({ chatId: c, userId: u }) => { if (c === chatId && u !== me?._id) setTyping(false); }),
+      socketService.on('recording',  ({ chatId: c, userId: u }) => {
+        if (c !== chatId || u === me?._id) return;
+        setRecording(true);
+        // Safety auto-clear in case a stopRecording is missed (e.g. peer drop).
+        clearTimeout(recordingTimer.current);
+        recordingTimer.current = setTimeout(() => setRecording(false), 6000);
+      }),
+      socketService.on('stopRecording', ({ chatId: c, userId: u }) => {
+        if (c !== chatId || u === me?._id) return;
+        clearTimeout(recordingTimer.current);
+        setRecording(false);
+      }),
       socketService.on('userOnline',  ({ userId: u }) => { if (u === otherUser?._id) setIsOnline(true); }),
       socketService.on('userOffline', ({ userId: u, lastSeen: ls }) => {
         if (u !== otherUser?._id) return;
@@ -1045,7 +1171,7 @@ export default function ChatConversationScreen({ route, navigation }) {
         setMessages((prev) => prev.map((m) => m._id === messageId ? { ...m, pinned } : m));
       }),
     ];
-    return () => { socketService.emit('leaveChat', chatId); unsubs.forEach((fn) => fn()); };
+    return () => { clearTimeout(recordingTimer.current); socketService.emit('leaveChat', chatId); unsubs.forEach((fn) => fn()); };
   }, [chatId, me?._id, otherUser?._id]);
 
   // ── Send-button pulse when text state flips empty↔non-empty ────────────
@@ -1078,6 +1204,9 @@ export default function ChatConversationScreen({ route, navigation }) {
 
     setSending(true); setText('');
     socketService.emit('stopTyping', { chatId });
+    // WhatsApp behaviour: sending YOUR OWN message always snaps to the newest
+    // (offset 0 on the inverted list), even if you had scrolled up.
+    requestAnimationFrame(() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true }));
     const clientMsgId = chatService.clientMsgId();
     const replyPayload = replyTo ? { replyTo } : {};
 
@@ -1242,7 +1371,10 @@ export default function ChatConversationScreen({ route, navigation }) {
       case 'video':    openVideoPicker();  break;
       case 'document': pickDocument();     break;
       case 'audio':    pickDocument();     break; // handled via document picker for generic audio
-      case 'voice':    /* long-press composer mic instead */ break;
+      case 'voice':
+        // The real recorder is the composer mic — guide instead of dead-tapping.
+        showToast('Hold the mic button to record a voice message');
+        break;
       case 'location':
       case 'contact':
       case 'poll':
@@ -1356,22 +1488,20 @@ export default function ChatConversationScreen({ route, navigation }) {
     setActionMsg(null);
     const isMine = (msg.senderId?._id || msg.senderId) === me?._id;
     if (scope === 'everyone' && !isMine) return;
-    Alert.alert(
-      scope === 'everyone' ? 'Delete for everyone?' : 'Delete for me?',
-      scope === 'everyone' ? 'The message will disappear for everyone in this chat.' : 'Only you will lose sight of this message.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: async () => {
-          const res = await chatService.deleteMessage(chatId, msg._id, scope);
-          if (!res?.success) return Alert.alert('Failed', res?.message || 'Try again.');
-          if (scope === 'everyone') {
-            setMessages((prev) => prev.map((m) => m._id === msg._id ? { ...m, deleted: true, text: '' } : m));
-          } else {
-            setMessages((prev) => prev.filter((m) => m._id !== msg._id));
-          }
-        }},
-      ],
-    );
+    setConfirm({
+      title:       scope === 'everyone' ? 'Delete for everyone?' : 'Delete for me?',
+      sublabel:    scope === 'everyone' ? 'The message will disappear for everyone in this chat.' : 'Only you will lose sight of this message.',
+      actionLabel: 'Delete',
+      onConfirm: async () => {
+        const res = await chatService.deleteMessage(chatId, msg._id, scope);
+        if (!res?.success) return Alert.alert('Failed', res?.message || 'Try again.');
+        if (scope === 'everyone') {
+          setMessages((prev) => prev.map((m) => m._id === msg._id ? { ...m, deleted: true, text: '' } : m));
+        } else {
+          setMessages((prev) => prev.filter((m) => m._id !== msg._id));
+        }
+      },
+    });
   };
 
   // ── Selection mode ─────────────────────────────────────────────────────
@@ -1382,16 +1512,16 @@ export default function ChatConversationScreen({ route, navigation }) {
   const bulkDelete = () => {
     const ids = Object.keys(selected);
     if (!ids.length) return;
-    Alert.alert(`Delete ${ids.length} message${ids.length > 1 ? 's' : ''}?`, 'Only you will lose sight of these.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: async () => {
-          await Promise.all(ids.map((id) => chatService.deleteMessage(chatId, id, 'me')));
-          setMessages((prev) => prev.filter((m) => !selected[m._id]));
-          clearSelection();
-        }},
-      ],
-    );
+    setConfirm({
+      title:       `Delete ${ids.length} message${ids.length > 1 ? 's' : ''}?`,
+      sublabel:    'Only you will lose sight of these.',
+      actionLabel: 'Delete',
+      onConfirm: async () => {
+        await Promise.all(ids.map((id) => chatService.deleteMessage(chatId, id, 'me')));
+        setMessages((prev) => prev.filter((m) => !selected[m._id]));
+        clearSelection();
+      },
+    });
   };
   const bulkForward = () => {
     const ids = Object.keys(selected);
@@ -1401,40 +1531,140 @@ export default function ChatConversationScreen({ route, navigation }) {
   };
 
   // ── Call / more menu ───────────────────────────────────────────────────
-  const startCall = (kind) => Alert.alert(`${kind} call`, `${kind} calling will be available soon.`);
-
-  const showMoreMenu = () => {
-    Alert.alert(
-      otherUser?.username || 'Chat',
-      undefined,
-      [
-        { text: 'View contact', onPress: () => Alert.alert('Contact', 'Contact profile view coming soon.') },
-        { text: 'Search in chat', onPress: openSearchBar },
-        { text: 'Mute notifications', onPress: async () => {
-          const r = await chatService.toggleMuteChat(chatId);
-          Alert.alert('Notifications', r?.success ? 'Mute setting updated.' : 'Failed');
-        }},
-        { text: 'Pin chat', onPress: async () => {
-          const r = await chatService.togglePinChat(chatId);
-          Alert.alert('Pin', r?.success ? 'Pin toggled.' : 'Failed');
-        }},
-        { text: 'Archive', onPress: async () => {
-          const r = await chatService.toggleArchive(chatId);
-          if (r?.success) navigation.goBack();
-        }},
-        { text: 'Clear chat', style: 'destructive', onPress: async () => {
-          Alert.alert('Clear chat?', 'Removes messages from your view only.', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Clear',  style: 'destructive', onPress: async () => {
-              const r = await chatService.clearChatHistory(chatId);
-              if (r?.success) setMessages([]);
-            }},
-          ]);
-        }},
-        { text: 'Cancel', style: 'cancel' },
-      ],
+  // Starts a WebRTC voice/video call; the CallProvider overlay takes over.
+  const startCall = (kind) => {
+    if (!otherUser?._id) return;
+    callService.placeCall(
+      { _id: otherUser._id, fullName: otherUser.fullName, username: otherUser.username, profileImage: otherUser.profileImage },
+      kind === 'Video' ? 'video' : 'audio',
     );
   };
+
+  // Open the modern options bottom sheet (replaces the old Alert menu). Fetches
+  // the block relationship lazily so we can show Block vs Unblock correctly.
+  const showMoreMenu = () => {
+    setMenuOpen(true);
+    if (blocked === null && otherUser?._id) {
+      userService.getUserProfile(otherUser._id)
+        .then((r) => { if (r?.success && r.user) setBlocked(!!r.user.isBlockedByMe); })
+        .catch(() => {});
+    }
+  };
+
+  // Route through the shared ownership-aware helper (own → My Profile). The
+  // chat partner is normally another user, but this stays correct even in the
+  // edge case of a self-chat.
+  const openProfile = () => {
+    if (otherUser?._id) goToProfile(otherUser._id);
+  };
+
+  // ── Lightweight snackbar/toast (auto-dismiss, optional undo action) ──────
+  const showToast = (text, actionLabel, onAction, ms = 4200) => {
+    clearTimeout(toastTimer.current);
+    setToast({ text, actionLabel, onAction });
+    toastTimer.current = setTimeout(() => setToast(null), ms);
+  };
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+
+  // ── Mute-duration picker ─────────────────────────────────────────────────
+  const MUTE_CHOICES = [
+    { key: '8h',     icon: 'time-outline',              label: 'Mute for 8 hours' },
+    { key: '24h',    icon: 'time-outline',              label: 'Mute for 24 hours' },
+    { key: '1w',     icon: 'calendar-outline',          label: 'Mute for 1 week' },
+    { key: 'always', icon: 'notifications-off-outline', label: 'Mute always' },
+    { key: 'off',    icon: 'notifications-outline',     label: 'Unmute', destructive: true },
+  ];
+  const buildMuteOptions = () => MUTE_CHOICES.map((c) => ({
+    ...c,
+    onPress: async () => {
+      try {
+        await chatService.toggleMuteChat(chatId, c.key);
+        showToast(c.key === 'off' ? 'Notifications unmuted' : `Muted · ${c.label.replace('Mute for ', '').replace('Mute ', '')}`);
+      } catch (_) { showToast('Could not update mute setting'); }
+    },
+  }));
+
+  // ── Report user ──────────────────────────────────────────────────────────
+  const REPORT_REASONS = [
+    { key: 'spam',          icon: 'megaphone-outline',      label: 'Spam' },
+    { key: 'harassment',    icon: 'sad-outline',            label: 'Harassment or bullying' },
+    { key: 'fake',          icon: 'person-remove-outline',  label: 'Fake account' },
+    { key: 'inappropriate', icon: 'warning-outline',        label: 'Inappropriate content' },
+    { key: 'other',         icon: 'ellipsis-horizontal',    label: 'Something else' },
+  ];
+  const buildReportOptions = () => REPORT_REASONS.map((r) => ({
+    ...r,
+    onPress: async () => {
+      try {
+        const res = await chatService.reportUser(otherUser?._id, r.key);
+        showToast(res?.success ? 'Report submitted. Thanks for keeping TrueVision safe.' : (res?.message || 'Could not submit report'));
+      } catch (_) { showToast('Could not submit report'); }
+    },
+  }));
+
+  // Build the professional action list. Options with `soon:true` are honest
+  // TODO placeholders (no backend yet) — dimmed, non-actionable, not fake.
+  const buildChatMenu = () => [
+    { key: 'mute',    icon: 'notifications-off-outline', label: 'Mute notifications',
+      sublabel: '8 hours · 24 hours · 1 week · Always',
+      onPress: () => setMuteOpen(true) },
+    { key: 'search',  icon: 'search-outline',            label: 'Search messages', onPress: openSearchBar },
+    { key: 'profile', icon: 'person-circle-outline',     label: 'View profile',    onPress: openProfile },
+
+    // TODO (backend): shared-media/files/links endpoints + a media gallery screen.
+    { key: 'media',   icon: 'images-outline',            label: 'Shared media',    soon: true },
+    { key: 'files',   icon: 'document-outline',          label: 'Shared files',    soon: true },
+    { key: 'links',   icon: 'link-outline',              label: 'Shared links',    soon: true },
+    // TODO (feature): per-chat wallpaper/theme persisted on the Chat doc.
+    { key: 'theme',   icon: 'color-palette-outline',     label: 'Wallpaper / chat theme', soon: true },
+
+    { key: 'pin',     icon: 'pin-outline',               label: 'Pin conversation',
+      onPress: async () => { await chatService.togglePinChat(chatId); } },
+    { key: 'archive', icon: 'archive-outline',           label: 'Archive chat',
+      onPress: async () => { const r = await chatService.toggleArchive(chatId); if (r?.success) navigation.goBack(); } },
+    { key: 'read',    icon: 'checkmark-done-outline',    label: 'Mark as read',
+      onPress: async () => { await chatService.markAsRead(chatId); } },
+
+    { key: 'clear',   icon: 'trash-bin-outline',         label: 'Clear chat', destructive: true,
+      onPress: () => setConfirm({
+        title: 'Clear this chat?',
+        sublabel: 'Removes messages from your view only. The other person keeps their copy.',
+        actionLabel: 'Clear chat',
+        onConfirm: async () => {
+          const snapshot = messages;                      // keep for undo
+          const r = await chatService.clearChatHistory(chatId);
+          if (r?.success) {
+            setMessages([]);
+            showToast('Chat cleared', 'Undo', async () => {
+              // Restore the horizon on the server, then re-show the messages.
+              try { await chatService.clearChatHistory(chatId, { undo: true }); } catch (_) {}
+              setMessages(snapshot);
+            });
+          }
+        },
+      }) },
+
+    // TODO (feature): export-chat (generate a .txt/.json transcript + share).
+    { key: 'export',  icon: 'download-outline',          label: 'Export chat',     soon: true },
+    { key: 'report',  icon: 'flag-outline',              label: 'Report user',
+      onPress: () => setReportOpen(true) },
+
+    // Block / Unblock — real backend (userService). Shown per current state.
+    blocked
+      ? { key: 'unblock', icon: 'lock-open-outline',     label: 'Unblock user',
+          onPress: async () => { const r = await userService.unblockUser(otherUser._id); if (r?.success) setBlocked(false); } }
+      : { key: 'block',   icon: 'ban-outline',           label: 'Block user', destructive: true,
+          onPress: () => setConfirm({
+            title: `Block @${otherUser?.username || 'this user'}?`,
+            sublabel: 'They won’t be able to message, call, or see your activity.',
+            actionLabel: 'Block',
+            onConfirm: async () => { const r = await userService.blockUser(otherUser._id); if (r?.success) setBlocked(true); },
+          }) },
+
+    // TODO (backend): delete-conversation endpoint (removes the Chat entry, not
+    // just its messages). Distinct from Clear chat above.
+    { key: 'delete',  icon: 'trash-outline',             label: 'Delete conversation', destructive: true, soon: true },
+  ];
 
   // ── In-chat search ─────────────────────────────────────────────────────
   const openSearchBar = () => {
@@ -1523,7 +1753,7 @@ export default function ChatConversationScreen({ route, navigation }) {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={0}
         >
-        <View style={[S.root, { paddingBottom: kb.bottomPad }]} onLayout={kb.onHostLayout}>
+        <Animated.View style={[S.root, { paddingBottom: kb.padAnim }]} onLayout={kb.onHostLayout}>
 
           {/* ────────────── HEADER ────────────── */}
           <View style={[S.header, { borderBottomColor: ct.border, backgroundColor: ct.header }]}>
@@ -1533,7 +1763,7 @@ export default function ChatConversationScreen({ route, navigation }) {
             </TouchableOpacity>
 
             <TouchableOpacity style={S.hIdentity} activeOpacity={0.7}
-              onPress={() => { if (otherUser?._id) navigation.navigate('UserProfile', { userId: otherUser._id }); }}>
+              onPress={openProfile}>
               <View>
                 <Avatar uri={otherUser?.profileImage} name={otherUser?.fullName || otherUser?.username} size={40} ct={ct} />
                 <View style={[S.hPresence, {
@@ -1552,11 +1782,11 @@ export default function ChatConversationScreen({ route, navigation }) {
                 </View>
                 <Text
                   style={[S.hStatus, {
-                    color: typing ? ct.accent : isOnline ? ct.online : ct.secondary,
+                    color: (recording || typing) ? ct.accent : isOnline ? ct.online : ct.secondary,
                   }]}
                   numberOfLines={1}
                 >
-                  {typing ? 'typing…' : isOnline ? 'online' : (lastSeen ? formatLastSeen(lastSeen) : '')}
+                  {recording ? 'recording audio…' : typing ? 'typing…' : isOnline ? 'online' : (lastSeen ? formatLastSeen(lastSeen) : '')}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -1603,6 +1833,8 @@ export default function ChatConversationScreen({ route, navigation }) {
                   placeholderTextColor={ct.dim}
                   value={searchQuery}
                   onChangeText={(t) => { setSearchQuery(t); runChatSearch(t); }}
+                  onFocus={kb.onInputFocus}
+                  onBlur={kb.onInputBlur}
                   autoFocus autoCorrect={false} returnKeyType="search"
                 />
                 {!!searchQuery && (
@@ -1668,7 +1900,11 @@ export default function ChatConversationScreen({ route, navigation }) {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
-              onScroll={(e) => setShowScrollDown(e.nativeEvent.contentOffset.y > 300)}
+              onScroll={(e) => {
+                const y = e.nativeEvent.contentOffset.y;
+                scrollOffsetRef.current = y;
+                setShowScrollDown(y > 300);
+              }}
               scrollEventThrottle={100}
               onEndReached={() => { if (hasMore && !loadingMore) loadMessages(page + 1, true); }}
               onEndReachedThreshold={0.4}
@@ -1750,7 +1986,10 @@ export default function ChatConversationScreen({ route, navigation }) {
           )}
 
           {/* ────────────── COMPOSER ────────────── */}
-          <View style={[S.composerWrap, { paddingBottom: Math.max(8, insets.bottom > 0 ? 0 : 8) }]}>
+          {/* Constant 8px — nav-bar/safe-area clearance is supplied by the
+              Animated host pad (Android idle = safeBottom) and by the iOS
+              SafeAreaView bottom edge, never doubled here. */}
+          <View style={[S.composerWrap, { paddingBottom: 8 }]}>
             <BlurView intensity={isDark ? 40 : 60} tint={ct.glassTint} style={S.composerBlur} />
             <View style={[S.composer, { backgroundColor: ct.composerBg, borderColor: ct.border }]}>
 
@@ -1813,7 +2052,11 @@ export default function ChatConversationScreen({ route, navigation }) {
                   ct={{ ...ct, danger: '#EF4444', textPrimary: ct.primary, textSecondary: ct.secondary, textDim: ct.dim, accent: ct.accent, sendGrad: ct.outgoing, surface: ct.surface }}
                   onSend={uploadAndSendVoice}
                   onCancel={() => {}}
-                  onRecordingChange={setVoiceActive}
+                  onRecordingChange={(active) => {
+                    setVoiceActive(active);
+                    // Broadcast a live "recording audio…" indicator to the peer.
+                    socketService.emit(active ? 'recording' : 'stopRecording', { chatId });
+                  }}
                   idleContent={(
                     <LinearGradient
                       colors={ct.outgoing}
@@ -1828,7 +2071,7 @@ export default function ChatConversationScreen({ route, navigation }) {
             </View>
           </View>
 
-        </View>
+        </Animated.View>
         </KeyboardAvoidingView>
       </SafeAreaView>
 
@@ -1916,6 +2159,59 @@ export default function ChatConversationScreen({ route, navigation }) {
             },
           } : undefined}
         />
+      )}
+
+      {/* ────────────── CHAT OPTIONS (modern bottom sheet) ────────────── */}
+      <ActionSheet
+        visible={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        title="Chat options"
+        options={buildChatMenu()}
+      />
+
+      {/* Modern destructive-confirm sheet (replaces the old Alert confirm) */}
+      <ActionSheet
+        visible={!!confirm}
+        onClose={() => setConfirm(null)}
+        title={confirm?.title}
+        options={confirm ? [
+          { key: 'confirm', icon: 'alert-circle-outline', label: confirm.actionLabel,
+            sublabel: confirm.sublabel, destructive: true, onPress: confirm.onConfirm },
+          { key: 'cancel',  icon: 'close-outline', label: 'Cancel', onPress: () => {} },
+        ] : []}
+      />
+
+      {/* Mute-duration picker */}
+      <ActionSheet
+        visible={muteOpen}
+        onClose={() => setMuteOpen(false)}
+        title="Mute notifications"
+        options={buildMuteOptions()}
+      />
+
+      {/* Report-reason picker */}
+      <ActionSheet
+        visible={reportOpen}
+        onClose={() => setReportOpen(false)}
+        title={`Report @${otherUser?.username || 'user'}`}
+        options={buildReportOptions()}
+      />
+
+      {/* Snackbar / toast (auto-dismiss, optional undo) */}
+      {toast && (
+        <View style={S.toastWrap} pointerEvents="box-none">
+          <View style={[S.toast, { backgroundColor: isDark ? '#1F2C34' : '#111B21' }]}>
+            <Text style={S.toastText} numberOfLines={2}>{toast.text}</Text>
+            {toast.actionLabel && (
+              <TouchableOpacity
+                onPress={() => { clearTimeout(toastTimer.current); const fn = toast.onAction; setToast(null); fn?.(); }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={[S.toastAction, { color: ct.seen }]}>{toast.actionLabel}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
       )}
     </View>
   );
@@ -2033,6 +2329,9 @@ const S = StyleSheet.create({
   bubbleMineCont:    { borderBottomRightRadius: 20 },
   bubbleTheirsFirst: { borderBottomLeftRadius: 6, borderWidth: StyleSheet.hairlineWidth },
   bubbleTheirsCont:  { borderBottomLeftRadius: 20, borderWidth: StyleSheet.hairlineWidth },
+  // Media-only: thin 3px frame instead of 12/8, and a barely-there shadow so
+  // the photo reads as a lightweight card, not a heavy bordered panel.
+  bubbleMedia:       { paddingHorizontal: 3, paddingVertical: 3, shadowOpacity: 0.10, shadowRadius: 3, elevation: 1 },
 
   // Message text
   msgText: { fontSize: 15, lineHeight: 20 },
@@ -2079,8 +2378,17 @@ const S = StyleSheet.create({
   speedBadge:{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   speedTxt:  { fontSize: 11, fontWeight: '700' },
 
+  // Floating timestamp overlay for caption-less photos (bottom-right scrim pill).
+  mediaFoot:     {
+    position: 'absolute', bottom: 6, right: 6,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+  },
+  mediaFootTime: { color: '#FFFFFF', fontSize: 10.5, marginRight: 2 },
+
   // ── Image bubble ───────────────────────────────────────────────────────
-  imgWrap:   { width: 240, height: 300, borderRadius: 14, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.05)' },
+  imgWrap:   { width: 240, height: 300, borderRadius: 12, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.05)' },
   imgMsg:    { width: '100%', height: '100%' },
   imgShimmer:{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.08)' },
   imgError:  { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(15,23,42,0.55)' },
@@ -2094,7 +2402,7 @@ const S = StyleSheet.create({
   retryBtnTxt: { color: '#FFFFFF', fontWeight: '700', marginLeft: 6, fontSize: 12 },
 
   // ── Video bubble ───────────────────────────────────────────────────────
-  vidWrap:  { width: 240, height: 220, borderRadius: 14, overflow: 'hidden' },
+  vidWrap:  { width: 240, height: 220, borderRadius: 12, overflow: 'hidden' },
   vidThumb: { ...StyleSheet.absoluteFillObject },
   vidGrad:  { ...StyleSheet.absoluteFillObject },
   vidPlay:  {
@@ -2133,7 +2441,12 @@ const S = StyleSheet.create({
   },
 
   // ── Empty state ────────────────────────────────────────────────────────
-  emptyWrap:   { alignItems: 'center', paddingTop: 80, transform: [{ scaleY: -1 }] },
+  // NO transform here. VirtualizedList counter-flips ListEmptyComponent itself
+  // (StyleSheet.compose(inversionStyle, ownStyle)) — and on Android the list's
+  // inversion is scale(-1) (BOTH axes), so adding our own scaleY(-1) used to
+  // OVERRIDE RN's counter-transform and leave the text horizontally MIRRORED.
+  // With no transform of our own, RN's counter renders it upright everywhere.
+  emptyWrap:   { alignItems: 'center', paddingTop: 80 },
   emptyIcon:   { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   emptyTitle:  { fontSize: 18, fontWeight: '700', marginTop: 14 },
   emptySub:    { fontSize: 13, marginTop: 6 },
@@ -2168,13 +2481,14 @@ const S = StyleSheet.create({
     borderRadius: 26, borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 4,
   },
-  composerBtn:  { paddingHorizontal: 4, paddingVertical: 8 },
+  // ≥44 px effective touch targets (padding + hitSlop) per platform guidelines.
+  composerBtn:  { paddingHorizontal: 8, paddingVertical: 10, marginHorizontal: 2 },
   composerInput:{
     flex: 1, minHeight: 32, maxHeight: 120,
     fontSize: 15, paddingHorizontal: 8, paddingVertical: Platform.OS === 'ios' ? 6 : 4,
   },
   sendCircle: {
-    width: 42, height: 42, borderRadius: 21,
+    width: 44, height: 44, borderRadius: 22, marginLeft: 4,
     alignItems: 'center', justifyContent: 'center',
     shadowColor: '#0060DF', shadowOpacity: 0.45, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 5,
   },
@@ -2186,6 +2500,19 @@ const S = StyleSheet.create({
     backgroundColor: 'rgba(59,130,246,0.15)',
   },
   progressFill: { height: '100%' },
+
+  // ── Snackbar / toast ───────────────────────────────────────────────────
+  toastWrap: {
+    position: 'absolute', left: 0, right: 0, bottom: 92,
+    alignItems: 'center', paddingHorizontal: 16,
+  },
+  toast: {
+    flexDirection: 'row', alignItems: 'center', maxWidth: '100%',
+    paddingHorizontal: 16, paddingVertical: 12, borderRadius: 14,
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 8,
+  },
+  toastText:   { color: '#E9EDEF', fontSize: 13.5, flexShrink: 1, marginRight: 12 },
+  toastAction: { fontSize: 13.5, fontWeight: '800', letterSpacing: 0.3 },
 
   // ── Selection toolbar ──────────────────────────────────────────────────
   selectionBar: {

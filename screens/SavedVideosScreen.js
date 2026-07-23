@@ -20,6 +20,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { Ionicons }          from '@expo/vector-icons';
 import ScreenHeader          from '../components/settings/ScreenHeader';
 import { useTheme }          from '../context/ThemeContext';
+import { useConfirm }        from '../components/common/ConfirmProvider';
 import videoService          from '../services/VideoService';
 
 const { width } = Dimensions.get('window');
@@ -39,6 +40,7 @@ const fmt = (n) => {
 export default function SavedVideosScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const confirm = useConfirm();
 
   const [items, setItems]             = useState([]);
   const [page, setPage]               = useState(1);
@@ -146,17 +148,17 @@ export default function SavedVideosScreen({ navigation }) {
 
   const exitSelect = () => { setSelecting(false); setSelected(new Set()); };
 
-  const removeSelected = () => {
+  const removeSelected = async () => {
     const ids = [...selected];
     if (ids.length === 0) return;
-    Alert.alert(
-      'Remove from Saved',
-      `Remove ${ids.length} ${ids.length === 1 ? 'video' : 'videos'} from your saved list?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: () => doRemoveSelected(ids) },
-      ],
-    );
+    const ok = await confirm({
+      title:       'Remove from Saved',
+      message:     `Remove ${ids.length} ${ids.length === 1 ? 'video' : 'videos'} from your saved list?`,
+      confirmText: 'Remove',
+      destructive: true,
+      icon:        'bookmark-outline',
+    });
+    if (ok) doRemoveSelected(ids);
   };
 
   const doRemoveSelected = async (ids) => {
@@ -186,16 +188,16 @@ export default function SavedVideosScreen({ navigation }) {
     ]);
   };
 
-  const confirmClearAll = () => {
+  const confirmClearAll = async () => {
     if (items.length === 0) return;
-    Alert.alert(
-      'Clear all saved videos',
-      "This removes every video from your saved list — including ones not loaded yet. This can't be undone.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Clear all', style: 'destructive', onPress: doClearAll },
-      ],
-    );
+    const ok = await confirm({
+      title:       'Clear all saved videos',
+      message:     "This removes every video from your saved list — including ones not loaded yet. This can't be undone.",
+      confirmText: 'Clear all',
+      destructive: true,
+      icon:        'trash-outline',
+    });
+    if (ok) doClearAll();
   };
 
   const doClearAll = async () => {

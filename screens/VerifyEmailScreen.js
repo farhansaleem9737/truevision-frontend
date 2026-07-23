@@ -146,7 +146,7 @@ export default function VerifyEmailScreen({ route, navigation }) {
 
     try {
       const result = await authService.resendOTP(email);
-      
+
       setResendLoading(false);
 
       if (result.success) {
@@ -154,11 +154,20 @@ export default function VerifyEmailScreen({ route, navigation }) {
           'Code Sent!',
           'A new verification code has been sent to your email. Please check your inbox.'
         );
-        setResendTimer(60);
+        // Server tells us its cooldown so the client countdown always matches.
+        setResendTimer(Number(result.retryAfter) || 60);
         setCanResend(false);
         setOtp(['', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
       } else {
+        // Rate-limited → restart the countdown from the server's retryAfter so
+        // the button disables for exactly the remaining cooldown.
+        if (result.retryAfter) {
+          setResendTimer(Number(result.retryAfter));
+          setCanResend(false);
+        }
+        // Show the backend's EXACT reason (e.g. "SMTP authentication failed —
+        // Gmail rejected EMAIL_USER/EMAIL_PASSWORD…"), never a generic string.
         Alert.alert(
           'Failed to Send',
           result.message || 'Unable to send verification code. Please try again.'

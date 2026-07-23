@@ -16,7 +16,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Pressable, TouchableOpacity, TouchableWithoutFeedback,
-  Modal, Animated, Dimensions, Alert, StyleSheet, Platform,
+  Modal, Animated, Dimensions, StyleSheet, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -72,18 +72,9 @@ export default function MoreOptionsSheet({ visible, onClose, onSettings, onHelp,
   const handleLogout = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     onClose?.();
-    // Defer the confirmation so the sheet's close animation can play first.
-    setTimeout(() => {
-      Alert.alert(
-        'Logout',
-        'Are you sure you want to logout?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Logout', style: 'destructive', onPress: () => onLogout?.() },
-        ],
-        { cancelable: true },
-      );
-    }, 220);
+    // Close the sheet first, then hand off to the parent's themed confirmation
+    // card (ConfirmDialog) — no more stock system Alert.
+    setTimeout(() => onLogout?.(), 240);
   };
 
   return (

@@ -16,16 +16,76 @@ const api = axios.create({ baseURL: BASE_URL, timeout: 30000 });
 // `session:invalidated` — see services/sessionGuard.js for the design.
 attachSessionGuard(api);
 
+// ── Feed request hardening ────────────────────────────────────────────────────
+// Single-flight dedup: identical in-flight /feed requests share ONE network
+// call (prevents the double-fetch that happens when focus + a refresh event
+// fire together). Plus a single retry with backoff on a TRANSIENT failure
+// (network drop / 5xx / timeout) — a real 4xx is returned immediately.
+const inFlightFeed = new Map();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const isTransientErr = (e) =>
+  !e?.response || e.code === 'ECONNABORTED' || (e.response.status >= 500 && e.response.status < 600);
+
 // ─────────────────────────────────────────────────────────────────────────────
 const videoService = {
 
   // ── FEED ────────────────────────────────────────────────────────────────────
   /** sort: 'new' | 'trending' | 'random' */
   getFeed: async (page = 1, limit = 10, sort = 'new', category = '') => {
+    const params = { page, limit, sort };
+    if (category && category !== 'all') params.category = category;
+    const key = `feed:${sort}:${category || 'all'}:${page}:${limit}`;
+
+    // Dedup: return the existing promise for an identical in-flight request.
+    if (inFlightFeed.has(key)) return inFlightFeed.get(key);
+
+    const run = (async () => {
+      let lastErr;
+      for (let attempt = 0; attempt < 2; attempt++) {          // 1 try + 1 retry
+        try {
+          const res = await api.get('/feed', { params });
+          return res.data;
+        } catch (e) {
+          lastErr = e;
+          if (attempt === 0 && isTransientErr(e)) { await sleep(600); continue; }
+          break;
+        }
+      }
+      return { success: false, message: lastErr?.response?.data?.message || 'Network error' };
+    })();
+
+    inFlightFeed.set(key, run);
+    try { return await run; } finally { inFlightFeed.delete(key); }
+  },
+
+  /**
+   * Following feed — videos ONLY from creators the signed-in user follows,
+   * newest first. Server reads the follow set live, so it reflects follows /
+   * unfollows immediately. Paginated for infinite scroll.
+   */
+  getFollowingFeed: async (page = 1, limit = 10) => {
     try {
-      const params = { page, limit, sort };
-      if (category && category !== 'all') params.category = category;
-      const res = await api.get('/feed', { params });
+      const res = await api.get('/following', { params: { page, limit } });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error' };
+    }
+  },
+
+  // ── MODERATION (creator side) ────────────────────────────────────────────────
+  /** My uploads currently in the moderation queue (blocked / pending / etc.). */
+  getMyModeration: async (status) => {
+    try {
+      const res = await api.get('/mine/moderation', { params: status ? { status } : {} });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error' };
+    }
+  },
+  /** Appeal a blocked upload → creates a Pending review ticket. */
+  submitReviewRequest: async (videoId, { reason, description, notes, links } = {}) => {
+    try {
+      const res = await api.post(`/${videoId}/review-request`, { reason, description, notes, links });
       return res.data;
     } catch (e) {
       return { success: false, message: e.response?.data?.message || 'Network error' };
@@ -292,12 +352,17 @@ const videoService = {
       const looksLikeImage = /^image\//i.test(mimeType);
       const kind = looksLikeImage ? 'image' : 'raw';
 
-      const sigRes = await api.get('/attachment-signature', { params: { kind } });
+      // Raw docs are stored as Cloudinary type 'private': public raw PDF
+      // delivery is blocked account-wide, so the player fetches a short-lived
+      // authenticated link via getEvidenceFileUrl instead of the stored URL.
+      const sigRes = await api.get('/attachment-signature', {
+        params: kind === 'raw' ? { kind, access: 'private' } : { kind },
+      });
       if (!sigRes.data?.success) {
         return { success: false, message: sigRes.data?.message || 'Signature failed' };
       }
       const {
-        signature, timestamp, folder, resourceType,
+        signature, timestamp, folder, resourceType, type: accessType,
         api_key, cloud_name,
       } = sigRes.data;
 
@@ -313,6 +378,9 @@ const videoService = {
       formData.append('timestamp', String(timestamp));
       formData.append('signature', signature);
       formData.append('folder',    folder);
+      // Must mirror every signed param — the server includes `type` in the
+      // signature only when it grants private storage.
+      if (accessType) formData.append('type', accessType);
 
       const res = await fetch(cloudinaryUrl, { method: 'POST', body: formData });
       const data = await res.json();
@@ -337,6 +405,20 @@ const videoService = {
     } catch (e) {
       console.error('[uploadAttachment]', e.message);
       return { success: false, message: e.message };
+    }
+  },
+
+  // ── Evidence file link ───────────────────────────────────────────────────────
+  // Fresh short-lived download URL for an evidence PDF/doc. The stored
+  // Cloudinary URL is NOT directly openable (raw PDF delivery is blocked on
+  // the account), so the player calls this right before opening/downloading.
+  //   field: 'source' | 'news'   index: position in sourceFiles/newsFiles
+  getEvidenceFileUrl: async (videoId, field = 'source', index = 0) => {
+    try {
+      const res = await api.get(`/${videoId}/evidence/${index}/url`, { params: { field } });
+      return res.data;
+    } catch (e) {
+      return { success: false, message: e.response?.data?.message || 'Network error' };
     }
   },
 
